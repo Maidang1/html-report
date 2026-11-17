@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>请求重试：retry() 的指数退避与抖动</title>
+<meta name="description" content="用一个 10 行的重试函数，演示 tech-article-html 的全部正文写法。">
+<script type="application/json" id="article-meta">{"title": "请求重试：retry() 的指数退避与抖动", "title_html": "请求重试：<code>retry()<\/code> 的指数退避与抖动", "kicker": "示例", "deck": "用一个 10 行的重试函数，演示 tech-article-html 的全部正文写法。", "meta": ["TypeScript"], "sections": ["重试的关键不是“再试一次”，而是“等多久再试”", "退避时间线：抖动让重试错开", "三种重试策略对比"], "chars": 623, "minutes": 2, "updated": "2026-11-17"}</script>
+<script>(function(){try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+<style>
+:root {
+  --bg: #fafaf8; --surface: #ffffff; --sunken: #eeede8;
+  --ink: #1b1b19; --ink-2: #3a3a36; --muted: #72716b; --faint: #a3a29c;
+  --line: #e6e5e0; --line-strong: #cfcec8;
+  --accent: #2457d6; --accent-soft: rgb(36 87 214 / 0.08);
+  --code-bg: #15161a; --code-head: #1d1e23; --code-ink: #e4e4e1; --code-line: #2a2b31;
+  --prompt-bg: #f6f5f1; --prompt-ink: #2b2a27;
+  --pr-h: #2457d6; --pr-b: #1b1b19;
+  --hl: rgb(36 87 214 / 0.10); --hl-amber: rgb(217 119 6 / 0.14);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.05);
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Noto Sans CJK SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111110; --surface: #181817; --sunken: #1e1e1c;
+    --ink: #ecebe7; --ink-2: #cdccc6; --muted: #98978f; --faint: #6b6a64;
+    --line: #2a2a27; --line-strong: #3d3d39;
+    --accent: #7ea2ff; --accent-soft: rgb(126 162 255 / 0.10);
+    --code-bg: #0d0e10; --code-head: #16171a; --code-line: #24252a;
+    --prompt-bg: #1a1a18; --prompt-ink: #dad9d3;
+    --pr-h: #8fb0ff; --pr-b: #f1f0ec;
+    --hl: rgb(126 162 255 / 0.14); --hl-amber: rgb(245 158 11 / 0.16);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111110; --surface: #181817; --sunken: #1e1e1c;
+  --ink: #ecebe7; --ink-2: #cdccc6; --muted: #98978f; --faint: #6b6a64;
+  --line: #2a2a27; --line-strong: #3d3d39;
+  --accent: #7ea2ff; --accent-soft: rgb(126 162 255 / 0.10);
+  --code-bg: #0d0e10; --code-head: #16171a; --code-line: #24252a;
+  --prompt-bg: #1a1a18; --prompt-ink: #dad9d3;
+  --pr-h: #8fb0ff; --pr-b: #f1f0ec;
+  --hl: rgb(126 162 255 / 0.14); --hl-amber: rgb(245 158 11 / 0.16);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.75 var(--sans); -webkit-font-smoothing: antialiased;
+  text-autospace: ideograph-alpha ideograph-numeric;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+strong { font-weight: 650; color: var(--ink); }
+:not(pre) > code {
+  padding: 0.12em 0.38em; border-radius: 4px;
+  background: var(--sunken); color: var(--ink);
+  font: 0.86em/1 var(--mono); letter-spacing: 0;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+
+/* progress + section ticks */
+.progress { position: fixed; inset: 0 0 auto 0; height: 2px; z-index: 60; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
+.ticks { position: fixed; left: 0; top: 50%; z-index: 50; transform: translateY(-50%); padding: 16px 20px 16px 26px; }
+.ticks-list { display: flex; flex-direction: column; gap: 2px; }
+.ticks-list a {
+  display: block; width: 16px; height: 10px; padding: 4px 0;
+  background: var(--line-strong); background-clip: content-box; border-radius: 2px;
+  transition: width .16s ease, background-color .16s ease;
+}
+.ticks-list a.lv3 { width: 9px; }
+.ticks-list a:hover, .ticks-list a:focus-visible { width: 24px; background-color: var(--ink-2); outline: none; text-decoration: none; }
+.ticks-list a.is-active { width: 28px; background-color: var(--ink); }
+.ticks-card {
+  position: absolute; left: 66px; width: 320px; transform: translateY(-50%);
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); box-shadow: var(--shadow); pointer-events: none;
+}
+.ticks-card .num { font: 600 11px/1 var(--mono); color: var(--accent); letter-spacing: .06em; }
+.ticks-card strong { display: block; margin-top: 4px; font-size: 14px; line-height: 1.45; }
+.ticks-card p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ticks-card p:empty { display: none; }
+
+/* page */
+.page { padding: 0 56px 120px 96px; }
+.masthead { padding: 56px 0 40px; border-bottom: 1px solid var(--line); }
+.masthead-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.back { font-size: 13px; color: var(--muted); }
+.back:hover { color: var(--accent); text-decoration: none; }
+.masthead-left { display: flex; align-items: center; gap: 14px; }
+.kicker { margin: 0; font: 600 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 13px var(--sans); cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); }
+h1 {
+  max-width: 1040px; margin: 18px 0 14px;
+  font-size: clamp(28px, 3.2vw, 44px); line-height: 1.18; font-weight: 700; letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h1 code { padding: 0; background: none; font: inherit; font-family: var(--mono); font-size: 0.92em; color: var(--accent); }
+.deck { max-width: 820px; margin: 0; color: var(--ink-2); font-size: 18px; line-height: 1.65; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.meta span {
+  padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font: 12.5px/1.6 var(--sans);
+}
+
+/* sections */
+.content { counter-reset: sec; }
+.sec { padding-top: 64px; }
+.sec + .sec { margin-top: 8px; }
+.sec > h2 {
+  counter-increment: sec; position: relative;
+  max-width: 1040px; margin: 0 0 28px;
+  font-size: clamp(22px, 1.9vw, 28px); line-height: 1.35; font-weight: 700; letter-spacing: -0.005em;
+  text-wrap: balance; scroll-margin-top: 28px;
+}
+.sec > h2::before {
+  content: counter(sec, decimal-leading-zero); display: block; margin-bottom: 10px;
+  font: 600 12px/1 var(--mono); letter-spacing: .1em; color: var(--accent);
+}
+h2 code, h3 code { padding: 0; background: none; color: var(--accent); font-size: 0.86em; font-weight: 600; }
+h3 { margin: 0 0 10px; font-size: 18px; line-height: 1.45; font-weight: 650; scroll-margin-top: 28px; }
+.anchor { margin-left: 8px; color: var(--faint); font-weight: 400; opacity: 0; }
+h2:hover .anchor, h3:hover .anchor { opacity: 1; text-decoration: none; }
+
+.intro { padding-top: 40px; }
+.intro > p { max-width: 820px; margin: 0 0 20px; color: var(--ink-2); }
+.points { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 8px 0 0; padding: 0; list-style: none; }
+.points li { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink-2); font-size: 14.5px; line-height: 1.65; }
+.points li > code.fn-name { display: inline-block; margin-bottom: 8px; padding: 0; background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
+.points li > span { display: block; }
+
+/* text | media rows */
+.row {
+  display: grid; grid-template-columns: minmax(300px, 600px) minmax(0, 1fr);
+  gap: 0 56px; align-items: start; margin: 0 0 40px;
+}
+.row-text > :first-child { margin-top: 0; }
+.row-text > :last-child { margin-bottom: 0; }
+.row-text p, .row-text ul, .row-text ol { margin: 0 0 16px; color: var(--ink-2); }
+.row-text ul, .row-text ol { padding-left: 1.3em; }
+.row-text li { margin: 6px 0; }
+.row-text li::marker { color: var(--faint); }
+.row-text blockquote {
+  margin: 0 0 16px; padding: 12px 16px; border-left: 2px solid var(--accent);
+  border-radius: 0 8px 8px 0; background: var(--accent-soft); color: var(--ink-2); font-size: 15px;
+}
+.row-text blockquote p { margin: 0; }
+.row-media { position: sticky; top: 24px; display: grid; gap: 20px; min-width: 0; }
+.row-only-text { grid-template-columns: minmax(0, 760px); }
+.row-only-text > .row-media { display: none; }
+.row-wide { display: block; margin: 0 0 48px; }
+
+/* panels */
+.panel { margin: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); position: relative; }
+.panel-head {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line); font: 12px/1.4 var(--mono); color: var(--muted);
+}
+.panel-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-lang { flex: none; color: var(--faint); }
+.panel-btn {
+  flex: none; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: inherit; font: 12px var(--sans); cursor: pointer;
+}
+.panel-btn:hover { border-color: var(--line); color: var(--ink); }
+.panel-body { max-height: 560px; overflow: auto; }
+.panel.expanded .panel-body { max-height: none; }
+.panel pre { margin: 0; padding: 16px 18px; font: 12.5px/1.7 var(--mono); letter-spacing: 0; tab-size: 4; }
+.panel pre code { font: inherit; }
+.panel-expand {
+  display: block; width: 100%; height: 34px; border: 0; border-top: 1px solid var(--line);
+  background: var(--surface); color: var(--accent); font: 12.5px var(--sans); cursor: pointer;
+}
+.panel-expand[hidden] { display: none; }
+
+.panel-code { background: var(--code-bg); border-color: var(--code-line); }
+.panel-code .panel-head { background: var(--code-head); border-color: var(--code-line); color: #9b9ca3; }
+.panel-code .panel-lang { color: #6c6d74; }
+.panel-code .panel-btn:hover { border-color: #3a3b42; color: #e4e4e1; }
+.panel-code .panel-expand { background: var(--code-head); border-color: var(--code-line); color: #9db8ff; }
+.panel-code pre { color: var(--code-ink); white-space: pre; }
+.panel-code .kw { color: #ff7b72; }
+.panel-code .fn { color: #d2a8ff; }
+.panel-code .str { color: #a5d6ff; }
+.panel-code :is(.cm, .cmt) { color: #8b949e; }
+.panel-code .num { color: #79c0ff; }
+.panel-code :is(.ty, .typ) { color: #ffa657; }
+.panel-code :is(.hl-line, .hl-amber) { display: inline-block; min-width: 100%; margin: 0 -18px; padding: 0 18px; box-sizing: content-box; }
+.panel-code .hl-line { background: rgb(56 139 253 / 0.16); box-shadow: inset 2px 0 0 #58a6ff; }
+.panel-code .hl-amber { background: rgb(210 153 34 / 0.18); box-shadow: inset 2px 0 0 #d29922; }
+
+/* highlight.js tokens for plain code (hand-tokenised code keeps its own spans) */
+.panel-code .hljs-keyword, .panel-code .hljs-selector-tag, .panel-code .hljs-doctag { color: #ff7b72; }
+.panel-code .hljs-title, .panel-code .hljs-title.function_, .panel-code .hljs-section { color: #d2a8ff; }
+.panel-code .hljs-string, .panel-code .hljs-regexp, .panel-code .hljs-template-variable { color: #a5d6ff; }
+.panel-code .hljs-comment, .panel-code .hljs-quote, .panel-code .hljs-meta { color: #8b949e; }
+.panel-code .hljs-number, .panel-code .hljs-literal, .panel-code .hljs-attr, .panel-code .hljs-variable, .panel-code .hljs-property, .panel-code .hljs-symbol { color: #79c0ff; }
+.panel-code .hljs-type, .panel-code .hljs-built_in, .panel-code .hljs-title.class_, .panel-code .hljs-params { color: #ffa657; }
+.panel-code .hljs-addition { color: #aff5b4; background: rgb(46 160 67 / 0.15); }
+.panel-code .hljs-deletion { color: #ffdcd7; background: rgb(248 81 73 / 0.15); }
+
+.panel-prompt { background: var(--prompt-bg); }
+.panel-prompt .panel-head { background: var(--surface); }
+.panel-prompt pre { color: var(--prompt-ink); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.75; }
+.panel-prompt .pr-h { color: var(--pr-h); font-weight: 700; }
+.panel-prompt .pr-b { color: var(--pr-b); font-weight: 650; }
+.panel-prompt :is(.cm, .cmt) { color: var(--muted); }
+.panel-prompt .kw, .panel-prompt .fn, .panel-prompt .num, .panel-prompt :is(.ty, .typ) { color: inherit; }
+.panel-prompt .str { color: inherit; }
+.panel-prompt :is(.hl-line, .hl-amber) { display: inline; padding: 1px 0; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.panel-prompt .hl-line { background: var(--hl); }
+.panel-prompt .hl-amber { background: var(--hl-amber); }
+
+.panel-diagram .panel-body { max-height: none; padding: 16px; cursor: zoom-in; }
+.panel-diagram.light .panel-body { background: #fff; }
+.panel-diagram.dark { background: #0c1220; border-color: #1e293b; }
+.panel-diagram.dark .panel-head { background: #0f172a; border-color: #1e293b; color: #94a3b8; }
+.panel-diagram svg { display: block; width: 100%; height: auto; min-width: 600px; letter-spacing: 0; }
+.panel-diagram.light svg { font-family: var(--sans); }
+.panel-diagram.wide svg { min-width: 920px; }
+.panel-diagram.zoomed {
+  position: fixed; inset: 24px; z-index: 80; display: flex; flex-direction: column;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.55), var(--shadow);
+}
+.panel-diagram.zoomed .panel-body { flex: 1; overflow: auto; cursor: zoom-out; display: grid; place-items: center; }
+.panel-diagram.zoomed svg { width: min(1600px, 100%); min-width: 0; }
+
+/* table */
+.row-wide .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.6; }
+th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; color: var(--ink-2); }
+th { position: sticky; top: 0; background: var(--sunken); color: var(--ink); font-weight: 650; font-size: 13px; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { color: var(--ink); white-space: nowrap; }
+td code, th code { white-space: normal; }
+
+.foot { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .page { padding: 0 28px 96px 64px; }
+  .row { display: block; }
+  .row-media { position: static; margin-top: 18px; }
+}
+@media (max-width: 640px) {
+  .ticks { display: none; }
+  .page { padding: 0 16px 72px; }
+  .masthead { padding-top: 32px; }
+  .deck { font-size: 16px; }
+  .panel-diagram svg { min-width: 560px; }
+}
+@media print {
+  .ticks, .progress, .theme-toggle, .panel-btn, .panel-expand { display: none !important; }
+  .page { padding: 0; }
+  .row { display: block; }
+  .row-media { position: static; }
+  .panel-body { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"></div>
+<nav class="ticks" aria-label="目录">
+  <div class="ticks-list"></div>
+  <div class="ticks-card" role="tooltip" hidden><span class="num"></span><strong></strong><p></p></div>
+</nav>
+<div class="page">
+  <header class="masthead">
+    <div class="masthead-top">
+      <div class="masthead-left"><p class="kicker">示例</p></div>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换明暗主题">◐ 主题</button>
+    </div>
+    <h1>请求重试：<code>retry()</code> 的指数退避与抖动</h1>
+    <p class="deck">用一个 10 行的重试函数，演示 tech-article-html 的全部正文写法。</p>
+    <div class="meta"><span>TypeScript</span><span data-reading-time></span><span data-sections></span></div>
+  </header>
+  <main class="content">
+<section class="intro"><p>这篇示例拆解一个带指数退避的请求重试函数，演示正文的全部写法：开头要点卡、左文右码、Prompt 面板、紧跟在代码后的引用说明、图和整行对比表。</p>
+<ul class="points"><li><code class="fn-name">retry()</code><span>失败后按 2 的幂次等待，再重新发起请求</span></li><li><code class="fn-name">jitter</code><span>在等待时间上加随机抖动，避免所有客户端同时重试</span></li><li><code class="fn-name">maxAttempts</code><span>给重试设上限，防止无限循环</span></li></ul></section>
+<section class="sec"><h2>重试的关键不是“再试一次”，而是“等多久再试”</h2>
+<div class="row"><div class="row-text"><p>最朴素的重试是失败后立刻再发一次。服务端过载时，这只会让压力翻倍。<code>retry()</code> 的做法是每次失败后把等待时间翻倍，并设一个上限。</p>
+<p>注意第 6 行：等待时间是 <code>base * 2 ** attempt</code>，再乘以一个 0.5～1 之间的随机数。</p>
+<blockquote><p>只对幂等请求重试。POST 下单这类请求要先带上幂等键，否则重试会重复下单。</p></blockquote></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="src/net/retry.ts">src/net/retry.ts</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">export async function retry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, maxAttempts = 5, base = 200): Promise&lt;T&gt; {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const wait = base * 2 ** attempt * (0.5 + Math.random() / 2);
+      if (attempt + 1 &gt;= maxAttempts) throw err;
+      await new Promise((r) =&gt; setTimeout(r, wait));
+    }
+  }
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>让模型遵守同样的规则</h3>
+<p>如果重试逻辑由 Agent 驱动，可以把规则直接写进系统提示词。下面是一段示例 Prompt：</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="prompts/retry-policy.md">prompts/retry-policy.md</span><span class="panel-lang">Prompt</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code># Retry policy
+
+When a tool call fails with a 5xx or timeout:
+1. Wait before retrying; double the wait each time (200ms, 400ms, 800ms…).
+2. Stop after 5 attempts and report the last error to the user.
+3. Never retry a non-idempotent call unless it carries an idempotency key.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>退避时间线：抖动让重试错开</h2>
+<div class="row"><div class="row-text"><p>没有抖动时，同一时刻失败的客户端会在同一时刻重试，形成一波又一波的尖峰。加上抖动后，重试被打散到一个时间窗口里。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 1：有无抖动时三次重试的时间分布</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 640 180" xmlns="http://www.w3.org/2000/svg" font-size="12">
+  <text x="10" y="40" fill="#555">无抖动</text>
+  <line x1="80" y1="36" x2="620" y2="36" stroke="#ccc"/>
+  <circle cx="140" cy="36" r="6" fill="#d14"/><circle cx="260" cy="36" r="6" fill="#d14"/><circle cx="500" cy="36" r="6" fill="#d14"/>
+  <text x="10" y="120" fill="#555">有抖动</text>
+  <line x1="80" y1="116" x2="620" y2="116" stroke="#ccc"/>
+  <circle cx="118" cy="116" r="6" fill="#2457d6"/><circle cx="131" cy="116" r="6" fill="#2457d6" opacity=".7"/>
+  <circle cx="205" cy="116" r="6" fill="#2457d6"/><circle cx="238" cy="116" r="6" fill="#2457d6" opacity=".7"/>
+  <circle cx="380" cy="116" r="6" fill="#2457d6"/><circle cx="452" cy="116" r="6" fill="#2457d6" opacity=".7"/>
+  <text x="80" y="160" fill="#888">0</text><text x="590" y="160" fill="#888">时间 →</text>
+</svg></div></figure></div></div>
+</section>
+<section class="sec"><h2>三种重试策略对比</h2>
+<div class="row-wide"><table>
+  <thead><tr><th>策略</th><th>等待时间</th><th>适用场景</th></tr></thead>
+  <tbody>
+    <tr><td>立即重试</td><td>0</td><td>偶发的网络抖动，且请求极便宜</td></tr>
+    <tr><td>固定间隔</td><td><code>base</code></td><td>轮询外部状态，例如等待 CI 结束</td></tr>
+    <tr><td>指数退避 + 抖动</td><td><code>base * 2^n * rand</code></td><td>服务端过载、限流（默认选择）</td></tr>
+  </tbody>
+</table></div>
+</section>
+  </main>
+  <footer class="foot">这是 tech-article-html skill 自带的示例页面。</footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function () {
+  var root = document.documentElement;
+  // theme
+  var tg = document.querySelector('[data-theme-toggle]');
+  if (tg) tg.addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('tech-article-theme', next); } catch (e) {}
+  });
+
+  // heading ids + anchors
+  var used = {};
+  function slug(t) {
+    var s = t.trim().toLowerCase().replace(/[\s　]+/g, '-').replace(/[^\p{L}\p{N}\-_]/gu, '').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'section';
+    var b = s, i = 2; while (used[s]) s = b + '-' + i++; used[s] = 1; return s;
+  }
+  var heads = Array.prototype.slice.call(document.querySelectorAll('.content h2, .content h3'));
+  var labels = heads.map(function (h) { return h.textContent.trim(); });
+  heads.forEach(function (h, i) {
+    h.id = h.id || slug(labels[i]);
+    var a = document.createElement('a'); a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#'; a.setAttribute('aria-label', '链接到本节');
+    h.appendChild(a);
+  });
+
+  // reading time + section count
+  var content = document.querySelector('.content');
+  var text = content.innerText || '';
+  var cjk = (text.match(/[㐀-鿿]/g) || []).length;
+  var words = (text.replace(/[㐀-鿿]/g, ' ').match(/[A-Za-z0-9_]+/g) || []).length;
+  var rt = document.querySelector('[data-reading-time]');
+  var preset = null;
+  try { preset = JSON.parse(document.getElementById('article-meta').textContent).minutes; } catch (e) {}
+  if (rt) rt.textContent = '约 ' + (preset || Math.max(1, Math.round(cjk / 400 + words / 220))) + ' 分钟';
+  var sc = document.querySelector('[data-sections]');
+  if (sc) sc.textContent = document.querySelectorAll('.content .sec > h2').length + ' 个章节';
+
+  // tables scroll inside a frame
+  content.querySelectorAll('table').forEach(function (t) {
+    var w = document.createElement('div'); w.className = 'table-wrap';
+    t.parentNode.insertBefore(w, t); w.appendChild(t);
+  });
+
+  // panels: copy, expand, zoom
+  document.querySelectorAll('.panel').forEach(function (p) {
+    var body = p.querySelector('.panel-body'), more = p.querySelector('[data-expand]');
+    if (more && body.scrollHeight > body.clientHeight + 8) {
+      more.hidden = false;
+      more.addEventListener('click', function () {
+        var on = p.classList.toggle('expanded');
+        more.textContent = on ? '收起' : '展开全部';
+        if (!on) p.scrollIntoView({ block: 'nearest' });
+      });
+    }
+    var copy = p.querySelector('[data-copy]');
+    if (copy) copy.addEventListener('click', function () {
+      var txt = p.querySelector('pre').innerText;
+      var done = function () { copy.textContent = '已复制'; setTimeout(function () { copy.textContent = '复制'; }, 1400); };
+      if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, function () {}); else done();
+    });
+    var zoom = p.querySelector('[data-zoom]');
+    if (zoom) {
+      var toggle = function () { var on = p.classList.toggle('zoomed'); zoom.textContent = on ? '关闭' : '放大'; };
+      zoom.addEventListener('click', toggle);
+      body.addEventListener('click', toggle);
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('.panel.zoomed').forEach(function (p) { p.classList.remove('zoomed'); p.querySelector('[data-zoom]').textContent = '放大'; });
+  });
+
+  // syntax colours for plain code blocks
+  if (window.hljs) document.querySelectorAll('.panel-code code[class^="language-"]').forEach(function (el) {
+    try { window.hljs.highlightElement(el); } catch (e) {}
+  });
+
+  // section ticks with hover card
+  var list = document.querySelector('.ticks-list'), card = document.querySelector('.ticks-card');
+  var secNo = 0, subNo = 0, nums = heads.map(function (h) {
+    if (h.tagName === 'H2') { subNo = 0; return ('0' + (++secNo)).slice(-2); }
+    return ('0' + secNo).slice(-2) + '.' + (++subNo);
+  });
+  function snippet(h) {
+    var scope = h.tagName === 'H2' ? h.parentElement : h.closest('.row-text');
+    var p = scope && scope.querySelector('p, li');
+    var t = p ? p.textContent.replace(/\s+/g, ' ').trim() : '';
+    return t.length > 120 ? t.slice(0, 120) + '…' : t;
+  }
+  var links = heads.map(function (h, i) {
+    var a = document.createElement('a');
+    a.href = '#' + h.id; a.className = h.tagName === 'H3' ? 'lv3' : 'lv2'; a.setAttribute('aria-label', labels[i]);
+    var show = function () {
+      card.querySelector('.num').textContent = nums[i];
+      card.querySelector('strong').textContent = labels[i];
+      card.querySelector('p').textContent = snippet(h);
+      card.style.top = (a.offsetTop + a.offsetHeight / 2) + 'px';
+      card.hidden = false;
+    };
+    a.addEventListener('mouseenter', show); a.addEventListener('focus', show);
+    a.addEventListener('blur', function () { card.hidden = true; });
+    list.appendChild(a); return a;
+  });
+  list.addEventListener('mouseleave', function () { card.hidden = true; });
+  var bar = document.querySelector('.progress');
+  function onScroll() {
+    var y = innerHeight * 0.25, act = 0;
+    heads.forEach(function (h, i) { if (h.getBoundingClientRect().top < y) act = i; });
+    links.forEach(function (a, i) { a.classList.toggle('is-active', i === act); });
+    var max = document.documentElement.scrollHeight - innerHeight;
+    bar.style.transform = 'scaleX(' + (max > 0 ? scrollY / max : 0) + ')';
+  }
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+})();
+</script>
+</body>
+</html>

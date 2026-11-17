@@ -1,0 +1,57 @@
+<p>这篇示例拆解一个带指数退避的请求重试函数，演示正文的全部写法：开头要点卡、左文右码、Prompt 面板、紧跟在代码后的引用说明、图和整行对比表。</p>
+<ul data-points>
+  <li><code>retry()</code>：失败后按 2 的幂次等待，再重新发起请求</li>
+  <li><code>jitter</code>：在等待时间上加随机抖动，避免所有客户端同时重试</li>
+  <li><code>maxAttempts</code>：给重试设上限，防止无限循环</li>
+</ul>
+
+<h2>重试的关键不是“再试一次”，而是“等多久再试”</h2>
+<p>最朴素的重试是失败后立刻再发一次。服务端过载时，这只会让压力翻倍。<code>retry()</code> 的做法是每次失败后把等待时间翻倍，并设一个上限。</p>
+<p>注意第 6 行：等待时间是 <code>base * 2 ** attempt</code>，再乘以一个 0.5～1 之间的随机数。</p>
+<pre data-lang="ts" data-title="src/net/retry.ts"><code>export async function retry&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, maxAttempts = 5, base = 200): Promise&lt;T&gt; {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const wait = base * 2 ** attempt * (0.5 + Math.random() / 2);
+      if (attempt + 1 &gt;= maxAttempts) throw err;
+      await new Promise((r) =&gt; setTimeout(r, wait));
+    }
+  }
+}</code></pre>
+<blockquote><p>只对幂等请求重试。POST 下单这类请求要先带上幂等键，否则重试会重复下单。</p></blockquote>
+
+<h3>让模型遵守同样的规则</h3>
+<p>如果重试逻辑由 Agent 驱动，可以把规则直接写进系统提示词。下面是一段示例 Prompt：</p>
+<pre data-lang="prompt" data-title="prompts/retry-policy.md"><code># Retry policy
+
+When a tool call fails with a 5xx or timeout:
+1. Wait before retrying; double the wait each time (200ms, 400ms, 800ms…).
+2. Stop after 5 attempts and report the last error to the user.
+3. Never retry a non-idempotent call unless it carries an idempotency key.</code></pre>
+
+<h2>退避时间线：抖动让重试错开</h2>
+<p>没有抖动时，同一时刻失败的客户端会在同一时刻重试，形成一波又一波的尖峰。加上抖动后，重试被打散到一个时间窗口里。</p>
+<figure data-diagram data-title="图 1：有无抖动时三次重试的时间分布">
+<svg viewBox="0 0 640 180" xmlns="http://www.w3.org/2000/svg" font-size="12">
+  <text x="10" y="40" fill="#555">无抖动</text>
+  <line x1="80" y1="36" x2="620" y2="36" stroke="#ccc"/>
+  <circle cx="140" cy="36" r="6" fill="#d14"/><circle cx="260" cy="36" r="6" fill="#d14"/><circle cx="500" cy="36" r="6" fill="#d14"/>
+  <text x="10" y="120" fill="#555">有抖动</text>
+  <line x1="80" y1="116" x2="620" y2="116" stroke="#ccc"/>
+  <circle cx="118" cy="116" r="6" fill="#2457d6"/><circle cx="131" cy="116" r="6" fill="#2457d6" opacity=".7"/>
+  <circle cx="205" cy="116" r="6" fill="#2457d6"/><circle cx="238" cy="116" r="6" fill="#2457d6" opacity=".7"/>
+  <circle cx="380" cy="116" r="6" fill="#2457d6"/><circle cx="452" cy="116" r="6" fill="#2457d6" opacity=".7"/>
+  <text x="80" y="160" fill="#888">0</text><text x="590" y="160" fill="#888">时间 →</text>
+</svg>
+</figure>
+
+<h2>三种重试策略对比</h2>
+<table>
+  <thead><tr><th>策略</th><th>等待时间</th><th>适用场景</th></tr></thead>
+  <tbody>
+    <tr><td>立即重试</td><td>0</td><td>偶发的网络抖动，且请求极便宜</td></tr>
+    <tr><td>固定间隔</td><td><code>base</code></td><td>轮询外部状态，例如等待 CI 结束</td></tr>
+    <tr><td>指数退避 + 抖动</td><td><code>base * 2^n * rand</code></td><td>服务端过载、限流（默认选择）</td></tr>
+  </tbody>
+</table>
