@@ -74,11 +74,11 @@ PAGE = r"""<!doctype html>
 <script>(function(){try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
 <style>
 :root {
-  --bg: #fafaf8; --surface: #ffffff; --sunken: #eeede8;
-  --ink: #1b1b19; --ink-2: #3a3a36; --muted: #72716b; --faint: #a3a29c;
-  --line: #e6e5e0; --line-strong: #cfcec8;
-  --accent: #2457d6; --accent-soft: rgb(36 87 214 / 0.08);
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.05);
+  --bg: #f5f4ed; --surface: #faf9f5; --sunken: #f0eee6;
+  --ink: #141413; --ink-2: #3d3d3a; --muted: #504e49; --faint: #6b6a64;
+  --line: #e8e6dc; --line-strong: #d8d5c8;
+  --accent: #1B365D; --accent-soft: #EEF2F7;
+  --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 8px 24px rgb(20 20 19 / 0.05);
   --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Noto Sans SC", "Noto Sans CJK SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
@@ -86,23 +86,24 @@ PAGE = r"""<!doctype html>
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #111110; --surface: #181817; --sunken: #1e1e1c;
-    --ink: #ecebe7; --ink-2: #cdccc6; --muted: #98978f; --faint: #6b6a64;
-    --line: #2a2a27; --line-strong: #3d3d39;
-    --accent: #7ea2ff; --accent-soft: rgb(126 162 255 / 0.10);
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+    --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+    --ink: #f2f0ea; --ink-2: #dad6ca; --muted: #a8a49a; --faint: #7a776e;
+    --line: #2e2d2a; --line-strong: #403f3c;
+    --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #111110; --surface: #181817; --sunken: #1e1e1c;
-  --ink: #ecebe7; --ink-2: #cdccc6; --muted: #98978f; --faint: #6b6a64;
-  --line: #2a2a27; --line-strong: #3d3d39;
-  --accent: #7ea2ff; --accent-soft: rgb(126 162 255 / 0.10);
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+  --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+  --ink: #f2f0ea; --ink-2: #dad6ca; --muted: #a8a49a; --faint: #7a776e;
+  --line: #2e2d2a; --line-strong: #403f3c;
+  --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+html { scroll-padding-top: 96px; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 code { font-family: var(--mono); font-size: 0.9em; }
@@ -135,17 +136,18 @@ h1 { margin: 18px 0 8px; font-size: clamp(28px, 3vw, 40px); line-height: 1.2; fo
   height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--surface); color: var(--muted); font: 13px var(--sans); cursor: pointer;
 }
-.tag:hover { color: var(--ink); }
-.tag[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+@media (hover: hover) { .tag:hover { color: var(--ink); } }
+.tag[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tag[aria-pressed="true"]::before { content: "✓ "; }
 .sort { margin-left: auto; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-2); font: 13px var(--sans); }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 18px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 18px; }
 .card {
-  display: flex; flex-direction: column; padding: 22px 24px 18px;
+  display: flex; flex-direction: column; min-width: 0; padding: 22px 24px 18px; overflow-wrap: anywhere;
   border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow);
-  transition: border-color .15s ease, transform .15s ease;
+  transition: border-color .15s ease;
 }
-.card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+@media (hover: hover) { .card:hover { border-color: var(--line-strong); } }
 .card-kicker { font: 600 11.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
 .card h2 { margin: 10px 0 8px; font-size: 20px; line-height: 1.4; font-weight: 700; }
 .card h2 a:hover { color: var(--accent); }
@@ -156,20 +158,24 @@ h1 { margin: 18px 0 8px; font-size: clamp(28px, 3vw, 40px); line-height: 1.2; fo
 .card details { margin-top: auto; border-top: 1px solid var(--line); padding-top: 10px; }
 .card summary { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--muted); font-size: 13px; list-style: none; }
 .card summary::-webkit-details-marker { display: none; }
-.card summary::after { content: "展开章节"; margin-left: auto; color: var(--accent); }
+.card summary::after { content: "展开章节"; flex: none; margin-left: auto; color: var(--accent); white-space: nowrap; }
 .card details[open] summary::after { content: "收起"; }
 .card ol { margin: 10px 0 4px; padding-left: 1.6em; font-size: 13.5px; line-height: 1.6; color: var(--ink-2); }
 .card ol li { margin: 4px 0; }
-.card ol li::marker { color: var(--faint); font-family: var(--mono); font-size: 12px; }
+.card ol li::marker { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .card ol a:hover { color: var(--accent); }
 .empty { padding: 60px 0; text-align: center; color: var(--muted); }
-.foot { margin-top: 56px; color: var(--faint); font-size: 12.5px; }
+.empty p { margin: 0 0 14px; }
+.empty button { height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 14px var(--sans); cursor: pointer; }
+.foot { margin-top: 56px; color: var(--muted); font-size: 12.5px; }
 .foot code { padding: 1px 5px; border-radius: 4px; background: var(--sunken); color: var(--muted); }
 mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 
 @media (max-width: 760px) {
+  html { scroll-padding-top: 0; }
   .page { padding: 0 16px 64px; }
-  .toolbar { margin: 0 -16px 20px; padding: 12px 16px; }
+  .toolbar { position: static; margin: 0 -16px 20px; padding: 12px 16px; }
+  .search, .sort { font-size: 16px; }
   .grid { grid-template-columns: 1fr; }
   .sort { margin-left: 0; }
 }
@@ -195,7 +201,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
     </select>
   </div>
   <main class="grid" data-grid></main>
-  <p class="empty" data-empty hidden>没有匹配的文章</p>
+  <div class="empty" data-empty hidden><p data-empty-msg></p><button type="button" data-clear>清除搜索和筛选</button></div>
   <footer class="foot">由 <code>build_index.py</code> 生成于 __DATE__。新增或删除文章后重新运行即可更新。</footer>
 </div>
 <script id="articles" type="application/json">__DATA__</script>
@@ -268,7 +274,14 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
         '</ol></details></article>';
     }).join('');
     empty.hidden = list.length > 0;
+    if (!list.length) empty.querySelector('[data-empty-msg]').textContent =
+      (q ? '没有匹配“' + search.value.trim() + '”' : '没有') + (active ? '、标签为“' + active + '”' : '') + '的文章';
   }
+  document.querySelector('[data-clear]').addEventListener('click', function () {
+    search.value = ''; active = null;
+    tagBox.querySelectorAll('.tag').forEach(function (x, i) { x.setAttribute('aria-pressed', i === 0 ? 'true' : 'false'); });
+    render(); search.focus();
+  });
   search.addEventListener('input', render);
   sort.addEventListener('change', render);
   addEventListener('keydown', function (e) {
@@ -280,6 +293,17 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 </body>
 </html>
 """
+
+
+def rem_fonts(page):
+    """Font sizes in rem inside <style>, so the reader's browser font-size setting still applies."""
+    to_rem = lambda m: f"{float(m.group(1)) / 16:g}rem"
+    return re.sub(r"<style>.*?</style>", lambda s: re.sub(
+        r"(?<![\w-])(font(?:-size)?\s*:[^;{}]*)",
+        lambda d: re.sub(r"(\d*\.?\d+)px", to_rem, d.group(1)), s.group(0)), page, flags=re.S)
+
+
+PAGE = rem_fonts(PAGE)
 
 
 def main():
