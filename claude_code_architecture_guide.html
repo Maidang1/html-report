@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code 的架构：模型之外的那一层 harness</title>
+<meta name="description" content="基于 Anthropic 工程博客与官方文档（截至 2026-11-20），拆解 Claude Code 的循环、上下文与缓存、工具与 Code Mode、扩展层、多代理、权限与沙箱和运行形态：循环本身很朴素，复杂度几乎都在循环之外。">
+<script type="application/json" id="article-meta">{"title": "Claude Code 的架构：模型之外的那一层 harness", "title_html": "Claude Code 的架构：模型之外的那一层 harness", "kicker": "架构解读", "deck": "基于 Anthropic 工程博客与官方文档（截至 2026-11-20），拆解 Claude Code 的循环、上下文与缓存、工具与 Code Mode、扩展层、多代理、权限与沙箱和运行形态：循环本身很朴素，复杂度几乎都在循环之外。", "meta": ["Claude Code v2.1.329（2026-11-19）", "anthropic.com/engineering + code.claude.com/docs"], "sections": ["总体：Claude Code 的价值在模型之外的那一层", "上下文与缓存：每轮都重发全部上下文，所以每个字节都要算账", "工具面在收缩：更少的专用工具，更强的 Bash", "Code Mode：让模型写 JavaScript 来调用工具", "扩展层：按“上下文成本”和“确定性”给每种扩展定位", "多代理四档：区别在于谁持有计划", "安全：环境隔离兜底，分类器减负", "长任务与运行形态：把会话从终端里解放出来", "设计取舍总览：每个选择都在付一种代价"], "chars": 18392, "minutes": 34, "updated": "2026-11-20"}</script>
+<script>(function(){try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+<style>
+:root {
+  --bg: #f5f4ed; --surface: #faf9f5; --sunken: #f0eee6;
+  --ink: #141413; --ink-2: #3d3d3a; --muted: #504e49; --faint: #6b6a64; --tick: #85837b;
+  --line: #e8e6dc; --line-strong: #d8d5c8;
+  --accent: #1B365D; --accent-soft: #EEF2F7;
+  --code-bg: #181816; --code-head: #22221f; --code-ink: #ece8da; --code-line: #30302e;
+  --prompt-bg: #faf9f5; --prompt-ink: #141413; --diagram-bg: #f5f4ed;
+  --pr-h: #1B365D; --pr-b: #141413;
+  --hl: #E4ECF5; --hl-amber: #f0e0d8;
+  --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 8px 24px rgb(20 20 19 / 0.05);
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Noto Sans CJK SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+    --ink: #f2f0ea; --ink-2: #dad6ca; --muted: #a8a49a; --faint: #7a776e; --tick: #6e6c64;
+    --line: #2e2d2a; --line-strong: #403f3c;
+    --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+    --code-bg: #10100f; --code-head: #191917; --code-line: #2a2926;
+    --prompt-bg: #1a1917; --prompt-ink: #dedad0; --diagram-bg: #f5f4ed;
+    --pr-h: #9bb8dc; --pr-b: #f2f0ea;
+    --hl: rgb(155 184 220 / 0.15); --hl-amber: rgb(217 180 138 / 0.16);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+  --ink: #f2f0ea; --ink-2: #dad6ca; --muted: #a8a49a; --faint: #7a776e; --tick: #6e6c64;
+  --line: #2e2d2a; --line-strong: #403f3c;
+  --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+  --code-bg: #10100f; --code-head: #191917; --code-line: #2a2926;
+  --prompt-bg: #1a1917; --prompt-ink: #dedad0; --diagram-bg: #f5f4ed;
+  --pr-h: #9bb8dc; --pr-b: #f2f0ea;
+  --hl: rgb(155 184 220 / 0.15); --hl-amber: rgb(217 180 138 / 0.16);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 1rem/1.75 var(--sans); -webkit-font-smoothing: antialiased;
+  text-autospace: ideograph-alpha ideograph-numeric;
+}
+a { color: var(--accent); text-decoration: none; }
+@media (hover: hover) { a:hover { text-decoration: underline; text-underline-offset: 3px; } }
+strong { font-weight: 650; color: var(--ink); }
+:not(pre) > code {
+  padding: 0.12em 0.38em; border-radius: 4px;
+  background: var(--sunken); color: var(--ink);
+  font: 0.86em/1 var(--mono); letter-spacing: 0;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+
+.skip {
+  position: absolute; left: 16px; top: -48px; z-index: 90; padding: 8px 14px; border-radius: 8px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font-size: 0.875rem;
+}
+.skip:focus { top: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* progress + section ticks */
+.progress { position: fixed; inset: 0 0 auto 0; height: 2px; z-index: 60; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
+.ticks { position: fixed; left: 0; top: 50%; z-index: 50; transform: translateY(-50%); padding: 16px 20px 16px 26px; }
+.ticks-list { display: flex; flex-direction: column; gap: 2px; }
+.ticks-list a {
+  display: block; width: 16px; height: 10px; padding: 4px 0;
+  background: var(--tick); background-clip: content-box; border-radius: 2px;
+  transition: width .16s ease, background-color .16s ease;
+}
+.ticks-list a.lv3 { width: 9px; }
+.ticks-list a:focus-visible, .ticks-list a.is-hover { width: 24px; background-color: var(--ink-2); outline: none; text-decoration: none; }
+.ticks-list a.is-active { width: 28px; background-color: var(--ink); }
+.ticks-card {
+  position: absolute; left: 66px; width: 320px; transform: translateY(-50%);
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); box-shadow: var(--shadow); pointer-events: none;
+}
+.ticks-card .num { font: 600 0.6875rem/1 var(--mono); color: var(--accent); letter-spacing: .06em; }
+.ticks-card strong { display: block; margin-top: 4px; font-size: 0.875rem; line-height: 1.45; }
+.ticks-card p { margin: 6px 0 0; color: var(--muted); font-size: 0.8125rem; line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ticks-card p:empty { display: none; }
+
+/* page */
+.page { max-width: 1760px; margin: 0 auto; padding: 0 56px 120px 96px; }
+.masthead { padding: 56px 0 40px; border-bottom: 1px solid var(--line); }
+.masthead-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.back { font-size: 0.8125rem; color: var(--muted); }
+@media (hover: hover) { .back:hover { color: var(--accent); text-decoration: none; } }
+.masthead-left { display: flex; align-items: center; gap: 14px; }
+.kicker { margin: 0; font: 600 0.75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); } }
+h1 {
+  max-width: 1040px; margin: 18px 0 14px;
+  font-size: clamp(1.75rem, 3.2vw, 2.75rem); line-height: 1.18; font-weight: 700; letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h1 code { padding: 0; background: none; font: inherit; font-family: var(--mono); font-size: 0.92em; color: var(--accent); }
+.deck { max-width: 820px; margin: 0; color: var(--ink-2); font-size: 1.125rem; line-height: 1.65; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.meta span {
+  padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font: 0.78125rem/1.6 var(--sans);
+}
+
+/* sections */
+.content { counter-reset: sec; }
+.sec { padding-top: 64px; }
+.sec + .sec { margin-top: 24px; border-top: 1px solid var(--line); }
+.sec > h2 {
+  counter-increment: sec; position: relative;
+  max-width: 1040px; margin: 0 0 28px;
+  font-size: clamp(1.375rem, 1.9vw, 1.75rem); line-height: 1.35; font-weight: 700; letter-spacing: -0.005em;
+  text-wrap: balance; scroll-margin-top: 28px;
+}
+.sec > h2::before {
+  content: counter(sec, decimal-leading-zero); display: block; margin-bottom: 10px;
+  font: 600 0.75rem/1 var(--mono); letter-spacing: .1em; color: var(--accent);
+}
+h2 code, h3 code { padding: 0; background: none; color: var(--accent); font-size: 0.86em; font-weight: 600; }
+h3 { margin: 0 0 10px; font-size: 1.125rem; line-height: 1.45; font-weight: 650; scroll-margin-top: 28px; }
+.anchor { margin-left: 8px; color: var(--muted); font-weight: 400; opacity: 0; }
+@media (hover: hover) { h2:hover .anchor, h3:hover .anchor { opacity: 1; text-decoration: none; } }
+.anchor:focus-visible { opacity: 1; text-decoration: none; }
+
+.intro { padding-top: 40px; }
+.intro > p { max-width: 760px; margin: 0 0 20px; color: var(--ink-2); }
+.points { display: grid; max-width: 1040px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 8px 0 0; padding: 0; list-style: none; }
+.points li { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink-2); font-size: 0.90625rem; line-height: 1.65; }
+.points li > code.fn-name { display: inline-block; margin-bottom: 8px; padding: 0; background: none; color: var(--accent); font-size: 0.8125rem; font-weight: 600; }
+.points li > span { display: block; }
+
+/* text | media rows */
+.row {
+  display: grid; grid-template-columns: minmax(340px, min(40%, 600px)) minmax(0, 1fr);
+  gap: 0 clamp(32px, 3.5vw, 56px); align-items: start; margin: 0 0 40px;
+}
+.row + .row:has(> .row-text > h3:first-child) { margin-top: 8px; padding-top: 28px; border-top: 1px dashed var(--line); }
+.row-text > :first-child { margin-top: 0; }
+.row-text > :last-child { margin-bottom: 0; }
+.row-text p, .row-text ul, .row-text ol { margin: 0 0 16px; color: var(--ink-2); }
+.row-text ul, .row-text ol { padding-left: 1.3em; }
+.row-text li { margin: 6px 0; }
+.row-text li::marker { color: var(--muted); }
+.row-text blockquote {
+  margin: 0 0 16px; padding: 12px 16px; border-left: 2px solid var(--accent);
+  border-radius: 0 8px 8px 0; background: var(--accent-soft); color: var(--ink-2); font-size: 0.9375rem;
+}
+.row-text blockquote p { margin: 0; }
+.row-media { position: sticky; top: 24px; display: grid; gap: 20px; min-width: 0; }
+.row-only-text { grid-template-columns: minmax(0, 760px); }
+.row-only-text > .row-media { display: none; }
+.row-wide { display: block; margin: 0 0 48px; }
+
+/* panels */
+.panel { margin: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); position: relative; }
+.panel-head {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--line); font: 0.75rem/1.4 var(--mono); color: var(--muted);
+}
+.panel-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.panel-lang { flex: none; color: var(--muted); }
+.panel-btn {
+  flex: none; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: inherit; font: 0.75rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .panel-btn:hover { border-color: var(--line); color: var(--ink); } }
+.panel-body { max-height: 560px; overflow: auto; }
+.panel-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panel.is-collapsible:not(.expanded) .panel-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent 100%);
+}
+.panel.expanded .panel-body { max-height: none; }
+.panel pre { margin: 0; padding: 16px 18px; font: 0.78125rem/1.7 var(--mono); letter-spacing: 0; tab-size: 4; }
+.panel pre code { font: inherit; }
+.panel-expand {
+  display: block; width: 100%; height: 34px; border: 0; border-top: 1px solid var(--line);
+  background: var(--surface); color: var(--accent); font: 0.78125rem var(--sans); cursor: pointer;
+}
+.panel-expand[hidden] { display: none; }
+
+.panel-code { background: var(--code-bg); border-color: var(--code-line); }
+.panel-code .panel-head { background: var(--code-head); border-color: var(--code-line); color: #a8a49a; }
+.panel-code .panel-lang { color: #a8a49a; }
+@media (hover: hover) { .panel-code .panel-btn:hover { border-color: #403f3c; color: #ece8da; } }
+.panel-code .panel-body:focus-visible { outline-color: #9bb8dc; }
+.panel-code .panel-expand { background: var(--code-head); border-color: var(--code-line); color: #9bb8dc; }
+.panel-code pre { color: var(--code-ink); white-space: pre; }
+.panel-code .kw { color: #ff7b72; }
+.panel-code .fn { color: #d2a8ff; }
+.panel-code .str { color: #a5d6ff; }
+.panel-code :is(.cm, .cmt) { color: #a8a49a; }
+.panel-code .num { color: #79c0ff; }
+.panel-code :is(.ty, .typ) { color: #ffa657; }
+.panel-code :is(.hl-line, .hl-amber) { display: inline-block; min-width: 100%; margin: 0 -18px; padding: 0 18px; box-sizing: content-box; }
+.panel-code .hl-line { background: rgb(56 139 253 / 0.16); box-shadow: inset 2px 0 0 #58a6ff; }
+.panel-code .hl-amber { background: rgb(210 153 34 / 0.18); box-shadow: inset 2px 0 0 #d29922; }
+
+/* highlight.js tokens for plain code (hand-tokenised code keeps its own spans) */
+.panel-code .hljs-keyword, .panel-code .hljs-selector-tag, .panel-code .hljs-doctag { color: #ff7b72; }
+.panel-code .hljs-title, .panel-code .hljs-title.function_, .panel-code .hljs-section { color: #d2a8ff; }
+.panel-code .hljs-string, .panel-code .hljs-regexp, .panel-code .hljs-template-variable { color: #a5d6ff; }
+.panel-code .hljs-comment, .panel-code .hljs-quote, .panel-code .hljs-meta { color: #a8a49a; }
+.panel-code .hljs-number, .panel-code .hljs-literal, .panel-code .hljs-attr, .panel-code .hljs-variable, .panel-code .hljs-property, .panel-code .hljs-symbol { color: #79c0ff; }
+.panel-code .hljs-type, .panel-code .hljs-built_in, .panel-code .hljs-title.class_, .panel-code .hljs-params { color: #ffa657; }
+.panel-code .hljs-addition { color: #aff5b4; background: rgb(46 160 67 / 0.15); }
+.panel-code .hljs-deletion { color: #ffdcd7; background: rgb(248 81 73 / 0.15); }
+
+.panel-prompt { background: var(--prompt-bg); }
+.panel-prompt .panel-head { background: var(--sunken); }
+.panel-prompt pre { color: var(--prompt-ink); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78125rem; line-height: 1.75; }
+.panel-prompt .pr-h { color: var(--pr-h); font-weight: 700; }
+.panel-prompt .pr-b { color: var(--pr-b); font-weight: 650; }
+.panel-prompt :is(.cm, .cmt) { color: var(--muted); }
+.panel-prompt .kw, .panel-prompt .fn, .panel-prompt .num, .panel-prompt :is(.ty, .typ) { color: inherit; }
+.panel-prompt .str { color: inherit; }
+.panel-prompt :is(.hl-line, .hl-amber) { display: inline; padding: 1px 0; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.panel-prompt .hl-line { background: var(--hl); }
+.panel-prompt .hl-amber { background: var(--hl-amber); }
+
+.panel-diagram .panel-body { max-height: none; padding: 16px; cursor: zoom-in; }
+.panel-diagram.light .panel-body {
+  background:
+    linear-gradient(to right, var(--diagram-bg) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--diagram-bg) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.14), transparent) left / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.14), transparent) right / 14px 100% no-repeat scroll,
+    var(--diagram-bg);
+}
+.panel-diagram.dark { background: #0c1220; border-color: #1e293b; }
+.panel-diagram.dark .panel-head { background: #0f172a; border-color: #1e293b; color: #94a3b8; }
+.panel-diagram svg { display: block; width: 100%; height: auto; min-width: 600px; letter-spacing: 0; }
+.panel-diagram.light svg { font-family: var(--sans); }
+.panel-diagram.wide svg { min-width: 920px; }
+.zoom-dialog { width: calc(100% - 48px); max-width: none; height: calc(100% - 48px); max-height: none; padding: 0; color: var(--ink); }
+.zoom-dialog[open] { display: flex; flex-direction: column; }
+.zoom-dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+.zoom-dialog .panel-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; cursor: zoom-out; }
+.zoom-dialog :is(svg, img) { display: block; width: 100%; height: 100%; min-width: 0; object-fit: contain; }
+
+/* table */
+.row-wide .table-wrap {
+  overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  /* edge shadows appear only while more columns sit past the scroll edge */
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) left / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--ink) 30%, transparent), transparent) left / 16px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--ink) 30%, transparent), transparent) right / 16px 100% no-repeat scroll,
+    var(--surface);
+}
+table { width: 100%; min-width: 880px; border-collapse: collapse; font-size: 0.84375rem; line-height: 1.6; }
+th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; color: var(--ink-2); }
+th { position: sticky; top: 0; background: var(--sunken); color: var(--ink); font-weight: 650; font-size: 0.8125rem; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); color: var(--ink); white-space: nowrap; box-shadow: 1px 0 0 var(--line); }
+th:first-child { position: sticky; left: 0; z-index: 2; box-shadow: 1px 0 0 var(--line); }
+td code, th code { white-space: normal; }
+
+.foot { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
+
+/* stack once the media column would drop below ~634px: a 600px-min diagram plus its padding */
+@media (max-width: 1320px) {
+  .row { display: block; }
+  .row-media { position: static; margin-top: 18px; }
+}
+@media (max-width: 1100px) {
+  .ticks { padding-left: 16px; padding-right: 12px; }
+  .page { padding: 0 28px 96px 72px; }
+}
+@media (max-width: 640px) {
+  .ticks { display: none; }
+  table { min-width: 680px; }
+  td:first-child, th:first-child { position: static; box-shadow: none; }
+  td:first-child { white-space: normal; }
+  .page { padding: 0 16px 72px; }
+  .masthead { padding-top: 32px; }
+  .deck { font-size: 1rem; }
+  .panel-diagram svg { min-width: 560px; }
+}
+@media print {
+  .ticks, .progress, .theme-toggle, .panel-btn, .panel-expand { display: none !important; }
+  .page { padding: 0; }
+  .row { display: block; }
+  .row-media { position: static; }
+  .panel-body { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">跳到正文</a>
+<div class="progress" aria-hidden="true"></div>
+<nav class="ticks" aria-label="目录">
+  <div class="ticks-list"></div>
+  <div class="ticks-card" role="tooltip" hidden><span class="num"></span><strong></strong><p></p></div>
+</nav>
+<div class="page">
+  <header class="masthead">
+    <div class="masthead-top">
+      <div class="masthead-left"><a class="back" href="index.html">← 全部文章</a><p class="kicker">架构解读</p></div>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换明暗主题">◐ 主题</button>
+    </div>
+    <h1>Claude Code 的架构：模型之外的那一层 harness</h1>
+    <p class="deck">基于 Anthropic 工程博客与官方文档（截至 2026-11-20），拆解 Claude Code 的循环、上下文与缓存、工具与 Code Mode、扩展层、多代理、权限与沙箱和运行形态：循环本身很朴素，复杂度几乎都在循环之外。</p>
+    <div class="meta"><span>Claude Code v2.1.329（2026-11-19）</span><span>anthropic.com/engineering + code.claude.com/docs</span><span data-reading-time></span><span data-sections></span></div>
+  </header>
+  <main class="content" id="content">
+<section class="intro"><p>Claude Code 的“智能”来自模型，但它能在真实仓库里连续工作几个小时，靠的是模型之外的那一层：工具、上下文管理、权限与沙箱、扩展机制和运行形态。Anthropic 把这一层叫作 <strong>agentic harness</strong>。本文只用 Anthropic 工程博客和 Claude Code 官方文档（截至 2026-11-20，对应 v2.1.329），按“循环 → 上下文 → 工具 → Code Mode → 扩展 → 多代理 → 安全 → 运行形态”的顺序拆解这一层是怎么设计的，以及每个设计在防什么问题。</p>
+<p>先给结论：循环本身很朴素，复杂度几乎全部在循环外面。Claude Code 的设计可以归结为三条主线：<strong>把上下文当预算</strong>（前缀缓存、按需加载、压缩），<strong>把确定性的事交给代码</strong>（hooks、Code Mode、dynamic workflows），<strong>把安全交给环境而不是提示词</strong>（OS 沙箱、代理、分类器只做减负）。</p>
+<ul class="points"><li><strong>一个循环，多种界面</strong>：终端、桌面、IDE、Web、Slack、CI 和 Agent SDK 跑的是同一个 agentic loop，只是执行位置和交互方式不同</li><li><strong>上下文是三层前缀</strong>：System prompt → Project context → Conversation，很多功能的形态是为了不打破缓存前缀</li><li><strong>Code Mode</strong>：模型写 JavaScript 调工具，中间结果留在脚本里；每个嵌套调用仍逐个过权限规则和 hook</li><li><strong>四档多代理</strong>：subagent、fork、agent teams、dynamic workflows，区别在“谁持有计划”</li><li><strong>安全分层</strong>：模式与规则定基线，OS 沙箱封边界，auto mode 分类器替人审批，事故经验反复指向“环境层兜底”</li><li><strong>harness 会过时</strong>：每个组件都编码了“模型做不到什么”的假设，模型变强后要逐个拆掉验证</li></ul></section>
+<section class="sec"><h2>总体：Claude Code 的价值在模型之外的那一层</h2>
+<div class="row"><div class="row-text"><p>官方对 agentic loop 的描述只有三步：<strong>收集上下文、采取行动、验证结果</strong>，三步交织、由模型决定每一步做什么，用户可以随时打断或在运行中插话。Claude Code 自己的定位是“围绕模型的那一层”：提供工具、管理模型看到的上下文（右侧原文）。</p>
+<p>这层 harness 对所有界面一视同仁。官方列出的执行环境有三种：<strong>Local</strong>（本机，默认）、<strong>Cloud</strong>（Anthropic 管理的 VM，或组织自托管的 self-hosted environments）、<strong>Remote Control</strong>（代码在本机执行，浏览器和手机只是窗口）。界面层包括终端、桌面应用、IDE 插件、claude.ai/code、Slack 和 CI；Agent SDK 则直接打包了原生 Claude Code 二进制，跑的是同一个循环。</p>
+<p>会话状态全部落在本地：每条消息、工具调用和结果写进 <code>~/.claude/projects/</code> 下的明文 JSONL，所以能 resume（同一 session ID 追加）、fork（复制历史到新 ID）和 rewind。编辑文件前还会给受影响的文件拍快照（checkpoint），双击 Esc 即可回滚；但数据库、API、部署这类远端副作用无法回滚，只能靠权限控制。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="code.claude.com/docs/en/how-claude-code-works.md:23">code.claude.com/docs/en/how-claude-code-works.md:23</span><span class="panel-lang">Markdown</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>The agentic loop is powered by two components: [models](#models) that reason and [tools](#tools) that act. Claude Code is the layer around the model that provides the tools and manages the context the model sees. This surrounding layer is what the term agentic harness refers to.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 1：Claude Code 的分层（根据官方文档整理）</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 760 430" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13">
+  <rect x="0" y="0" width="760" height="430" fill="#f7f8fa"/>
+  <text x="20" y="28" fill="#555" font-size="12">界面层</text>
+  <g fill="#ffffff" stroke="#c9ced6">
+    <rect x="20" y="38" width="108" height="34" rx="6"/><rect x="138" y="38" width="108" height="34" rx="6"/><rect x="256" y="38" width="108" height="34" rx="6"/><rect x="374" y="38" width="108" height="34" rx="6"/><rect x="492" y="38" width="108" height="34" rx="6"/><rect x="610" y="38" width="130" height="34" rx="6"/>
+  </g>
+  <g fill="#333" text-anchor="middle">
+    <text x="74" y="60">终端 CLI</text><text x="192" y="60">桌面应用</text><text x="310" y="60">IDE 插件</text><text x="428" y="60">Web / 手机</text><text x="546" y="60">Slack / CI</text><text x="675" y="60">Agent SDK</text>
+  </g>
+  <rect x="20" y="92" width="530" height="196" rx="10" fill="#eaf0fd" stroke="#2457d6"/>
+  <text x="36" y="116" fill="#2457d6" font-weight="600">harness 核心（各界面共用）</text>
+  <g fill="#ffffff" stroke="#2457d6">
+    <rect x="40" y="132" width="110" height="40" rx="6"/><rect x="176" y="132" width="110" height="40" rx="6"/><rect x="312" y="132" width="110" height="40" rx="6"/>
+  </g>
+  <g fill="#1d2b4f" text-anchor="middle">
+    <text x="95" y="157">组装上下文</text><text x="231" y="157">模型推理</text><text x="367" y="157">执行工具</text>
+  </g>
+  <g stroke="#2457d6" fill="none" stroke-width="1.5">
+    <path d="M150 152 H172"/><path d="M286 152 H308"/><path d="M367 172 V190 H95 V176"/>
+  </g>
+  <text x="231" y="204" fill="#555" font-size="12" text-anchor="middle">结果回流，直到模型不再请求工具</text>
+  <g fill="#ffffff" stroke="#c9ced6">
+    <rect x="40" y="222" width="150" height="50" rx="6"/><rect x="204" y="222" width="150" height="50" rx="6"/><rect x="368" y="222" width="166" height="50" rx="6"/>
+  </g>
+  <g fill="#333" font-size="12">
+    <text x="50" y="243">上下文管理</text><text x="50" y="261" fill="#666">缓存前缀 · 压缩 · 按需加载</text>
+    <text x="214" y="243">权限与沙箱</text><text x="214" y="261" fill="#666">模式 · 规则 · auto mode</text>
+    <text x="378" y="243">会话持久化</text><text x="378" y="261" fill="#666">JSONL · checkpoint · fork</text>
+  </g>
+  <rect x="570" y="92" width="170" height="196" rx="10" fill="#ffffff" stroke="#c9ced6"/>
+  <text x="584" y="116" fill="#333" font-weight="600">扩展层</text>
+  <g fill="#444" font-size="12">
+    <text x="584" y="142">CLAUDE.md / rules</text><text x="584" y="164">Skills</text><text x="584" y="186">MCP（tool search）</text><text x="584" y="208">Hooks / Mods</text><text x="584" y="230">Subagents / Workflows</text><text x="584" y="252">Plugins / Marketplace</text><text x="584" y="274">Output styles</text>
+  </g>
+  <path d="M570 190 H552" stroke="#999" stroke-width="1.5"/>
+  <text x="20" y="318" fill="#555" font-size="12">执行环境（代码在哪里跑）</text>
+  <g fill="#ffffff" stroke="#c9ced6">
+    <rect x="20" y="328" width="230" height="62" rx="6"/><rect x="265" y="328" width="230" height="62" rx="6"/><rect x="510" y="328" width="230" height="62" rx="6"/>
+  </g>
+  <g fill="#333">
+    <text x="34" y="352">Local</text><text x="34" y="373" fill="#666" font-size="12">本机；OS 沙箱包住 shell 命令</text>
+    <text x="279" y="352">Cloud</text><text x="279" y="373" fill="#666" font-size="12">托管 VM 或自托管环境；git 代理</text>
+    <text x="524" y="352">Remote Control</text><text x="524" y="373" fill="#666" font-size="12">本机执行，网页/手机做窗口</text>
+  </g>
+  <path d="M285 288 V324" stroke="#999" stroke-width="1.5"/>
+  <text x="20" y="418" fill="#888" font-size="11">后台会话由 supervisor 进程托管；Agent SDK 内置同一个二进制</text>
+</svg></div></figure></div></div>
+</section>
+<section class="sec"><h2>上下文与缓存：每轮都重发全部上下文，所以每个字节都要算账</h2>
+<div class="row row-only-text"><div class="row-text"><p>模型在两次请求之间不记得任何东西，Claude Code 每发一条消息都会<strong>重新发送完整上下文</strong>：system prompt、项目上下文、全部历史消息和工具结果，再加上新消息。成本和延迟能接受，全靠 API 的前缀缓存：只要请求开头与最近处理过的内容逐字一致，就按缓存价计费，只重新计算变化的部分。缓存按前缀精确匹配，前缀里任何一处改动都会让其后的全部内容重算，没有按文件或分段的缓存。</p>
+<p>所以 Claude Code 把请求按“变化频率”排成三层（下表）。这个排序解释了许多看似无关的设计：plan mode 和 skill 的指令以<strong>对话消息</strong>追加而不是改 system prompt；开启 tool search 时，会话第一次请求的工具列表在整场会话中固定不变，中途才连上的 MCP server 只以 deferred 形式出现；advisor 工具定义放在缓存断点之后，开关它不破坏前缀；<code>/fork</code> 把隔离指令放在复制对话的末尾。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>层</th><th>内容</th><th>何时变化</th></tr></thead>
+  <tbody>
+    <tr><td>System prompt</td><td>核心指令、工具定义</td><td>已加载的工具定义集合变化时</td></tr>
+    <tr><td>Project context</td><td>CLAUDE.md、auto memory、无作用域的 rules</td><td>会话开始，或 <code>/clear</code>、<code>/compact</code> 之后</td></tr>
+    <tr><td>Conversation</td><td>用户消息、Claude 的回复、工具结果</td><td>每一轮</td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><p>会让缓存失效的动作：切换模型（每个模型独立缓存）、改 effort（多数模型如此；5.5 代等新模型在订阅或 API key 下保持缓存）、打开 fast mode、在没有 tool search 时增删 MCP server、启停插件、deny 整个工具、压缩、累积大量图片、升级 Claude Code。不会失效的：编辑仓库文件、会话中修改 CLAUDE.md、切权限模式、切 output style、调用 skill、rewind。缓存 TTL 也分桶：订阅额度内主对话是 1 小时，子代理、workflow、teammate、fork、压缩请求都是 5 分钟；API key 和云厂商一律 5 分钟。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>压缩：摘要之后，哪些东西会被重新注入？</h3>
+<p>接近上限时，Claude Code 用一个独立请求把历史压缩成摘要。这个请求复用同一前缀（system prompt、工具、历史，末尾加摘要指令），缓存热的时候成本远低于上下文大小；这也是官方建议在任务间隙主动 <code>/compact</code>、而不是等到任务中途自动触发的原因。工程博客对这一步的描述见右侧：保留架构决策、未解决的 bug 和实现细节，丢掉冗余的工具输出，再带上最近访问的 5 个文件。</p>
+<p>文档给出了压缩后的完整清单：system prompt 与 output style 继续生效；根目录 CLAUDE.md、无作用域 rules、auto memory 从磁盘重新注入；skill 描述重建；git status 重新读取；plan mode 写下的计划从磁盘重注入；最近修改的至多 5 个读过或编辑过的文件被重读（超过 5,000 tokens 的只给路径）；已调用的 skill 正文重注入，每个 ≤5,000 tokens、合计 ≤25,000；后台命令和后台子代理继续运行，并提醒 Claude 哪些还在跑。带 <code>paths</code> 的规则和子目录 CLAUDE.md 则随历史一起被摘要掉，用到时再按需加载。如果单个文件或输出大到摘要后立刻又满，几次之后会停止自动压缩并报 thrashing 错误，而不是陷入循环。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/effective-context-engineering-for-ai-agents · Compaction">anthropic.com/engineering/effective-context-engineering-for-ai-agents · Compaction</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>In Claude Code, for example, we implement this by passing the message history to the model to summarize and compress the most critical details. The model preserves architectural decisions, unresolved bugs, and implementation details while discarding redundant tool outputs or messages. The agent can then continue with this compressed context plus the five most recently accessed files. Users get continuity without worrying about context window limitations.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>检索策略：CLAUDE.md 预先放入，其余 just-in-time</h3>
+<p>Anthropic 在上下文工程一文里把 Claude Code 作为“混合策略”的例子：CLAUDE.md 直接放进上下文，其余内容由 glob、grep 这类原语在需要时去取，绕开了预建索引过期和语法树复杂的问题。分析大型数据库时也是同样思路：写定向查询、把结果存下来、用 <code>head</code>/<code>tail</code> 查看，而不是把整份数据读进上下文。auto memory 遵守同样的预算观：只在会话开头加载 <code>MEMORY.md</code> 的前 200 行或 25KB，它只是索引，主题文件按需读取。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>2026 年 4 月的质量事故：harness 的每个细节都在影响智能</h3>
+<p>2026 年 3–4 月，用户反映 Claude Code “变笨了”。复盘显示 API 和推理层都没问题，问题是三处 harness 改动叠加：</p>
+<p><strong>默认 effort</strong>：3 月 4 日把默认推理强度从 <code>high</code> 降到 <code>medium</code> 以减少长尾延迟，4 月 7 日回滚；现在 Opus 4.7 默认 <code>xhigh</code>，其他模型默认 <code>high</code>。effort 值就是发给 Messages API 的 effort 参数。<strong>清理旧 thinking 的缓存优化</strong>：3 月 26 日上线“空闲超过 1 小时的会话恢复时清掉旧 thinking”（反正会 cache miss），用的是 <code>clear_thinking_20251015</code> 加 <code>keep:1</code>；bug 让它在此后<strong>每一轮</strong>都清，Claude 越来越不记得自己为何这样做，表现为健忘、重复、工具选择怪异，并因持续 cache miss 更快耗尽额度。4 月 10 日在 v2.1.101 修复。<strong>一行 system prompt</strong>：4 月 16 日为抑制 Opus 4.7 的啰嗦加了右侧这句长度限制，逐行消融显示 Opus 4.6 和 4.7 都掉了 3%，4 月 20 日（v2.1.116）回滚。</p>
+<blockquote><p>这句话短，却直接压低了“工具调用之间的思考文字”。后续措施包括：每次改 system prompt 都跑分模型的广泛评测和逐行消融，模型特定的改动按模型 gate，可能牺牲智能的改动加 soak 期和灰度。</p></blockquote></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/april-23-postmortem · 2026-04-16 加入、04-20 回滚的 system prompt 行">anthropic.com/engineering/april-23-postmortem · 2026-04-16 加入、04-20 回滚的 system prompt 行</span><span class="panel-lang">Prompt</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>“Length limits: keep text between tool calls to ≤25 words. Keep final responses to ≤100 words unless the task requires more detail.”</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>工具面在收缩：更少的专用工具，更强的 Bash</h2>
+<div class="row row-only-text"><div class="row-text"><p>官方把内置工具分为五类：文件操作、搜索、执行、Web、代码智能（需安装 LSP 插件），另有子代理、提问、计划、worktree、定时、消息等编排工具。2026 年的演进方向很清楚：<strong>能交给 shell 的就不单设工具</strong>，单设的工具则把边界条件写死。</p>
+<p>第一，<strong>Glob 和 Grep 默认消失</strong>。v2.1.117（2026-04-22）起，macOS、Linux、WSL 的原生构建不再提供这两个工具，Claude 直接在 Bash 里用 <code>find</code> 和 <code>grep</code>，它们实际调用内嵌的 <code>bfs</code> 和 <code>ugrep</code>，少一次工具往返；搜索也因此以 <code>Bash</code> 调用的身份经过 hooks 和权限规则。只有用 <code>--tools</code> 点名、或会话禁用了 Bash 时才会恢复。第二，<strong>新模型默认不给任务清单工具</strong>：TaskCreate 等和 TodoWrite 只在 Opus 4.7、Sonnet 4.6、Haiku 4.5 及更早模型上默认提供，理由是新模型不靠书面清单也能跟踪多步工作，而这些工具的定义和提醒本身占上下文。</p>
+<p>保留下来的工具都有细致的护栏：</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>工具</th><th>关键行为</th><th>为什么这样设计</th></tr></thead>
+  <tbody>
+    <tr><td>Bash</td><td>每条命令独立进程；<code>cd</code> 只在项目目录内跨命令保持，越界则重置并附 <code>Shell cwd was reset to &lt;dir&gt;</code>；环境变量不保留；默认超时 2 分钟、上限 10 分钟</td><td>每次调用状态可预测，避免模型误以为还在某个目录或环境里</td></tr>
+    <tr><td>Bash 输出</td><td>成功时内联约 30,000 字符，超出则存文件并给路径和前 2,000 字符预览；失败时给约 10,000 字符的头尾摘录；grep、rg、find、diff、test、git diff 的退出码 1 视为正常</td><td>大输出不直接灌进上下文，需要时再读或搜；减少把“无匹配”误判为失败</td></tr>
+    <tr><td>Read</td><td>单次默认至多 25,000 tokens，整文件超过 256KB 需分页；图片缩放后作为视觉输入；PDF 超过 10 页按 <code>pages</code> 每次至多 20 页</td><td>把读取成本变成显式的分页决策</td></tr>
+    <tr><td>Edit</td><td>精确字符串替换、要求唯一匹配；先读后改（新模型在读取无需授权时可直接改）；用 cat、head、<code>sed -n</code>、grep、rg 看过单个文件也算读过，并触发该目录 CLAUDE.md 与 path 规则加载</td><td>防止基于过期内容改文件，同时不强迫多一次 Read</td></tr>
+    <tr><td>WebFetch</td><td>HTML 转 Markdown 后，用<strong>另一次模型调用</strong>按 prompt 抽取，Claude 拿到的是抽取结果（官方称 “lossy by design”）；拒绝 localhost；每次至多 100,000 字符；缓存 15 分钟；跨主机重定向不自动跟随</td><td>网页原文不进主上下文；跨域跳转需要重新决策</td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><p>工具也决定了权限规则的写法：规则按工具名和参数匹配，例如 <code>Bash(npm run *)</code>、<code>Read(~/secrets/**)</code>、<code>Edit(/src/**)</code>、<code>WebFetch(domain:example.com)</code>、<code>Agent(Explore)</code>。Agent SDK 还规定了并行规则：只读工具可以并发，Edit、Write、Bash 这类改状态的工具串行执行。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>Code Mode：让模型写 JavaScript 来调用工具</h2>
+<div class="row"><div class="row-text"><p>Code Mode 是 2026-11-12（v2.1.323）加入的实验特性，默认关闭。它改变的是工具调用的形态：平时 Claude 逐个请求 Bash、Read、Edit，读完每个结果再决定下一步；开启后，Claude 写一段 JavaScript，由 Claude Code 在会话里执行，脚本内部调用工具，<strong>只有最后一个表达式的值返回给模型</strong>。承载它的工具叫 <code>REPL</code>。</p>
+<p>右侧是文档里的示例：<code>$</code> 模板标签运行 shell 命令，<code>edit()</code> 是编辑工具的函数形态，最后一行的对象就是返回给 Claude 的内容（被改的文件路径和测试输出）。一次推理完成了“搜索、取第一个结果、修改、跑测试”四步，中间的搜索结果没有进入上下文。界面上用户看到的仍是工具调用（例如 diff），代码本身折叠在 <code>Ctrl+O</code> 的 transcript 视图里。适用场景是跨多文件的重复修改、需要先过滤再读的搜索、可以并行的独立命令。</p>
+<p>脚本之间是 REPL 语义：changelog 里有“Fixed a Code Mode script's <code>let x;</code> keeping the value that an earlier script gave <code>x</code>”和“top-level variables that an earlier failed script never set”这类条目，说明顶层变量会跨脚本保留；还有 <code>tools</code> 对象（“losing access to tools through <code>tools</code> in sessions with more than 4,096 tools”）以及 <code>log</code>、<code>preview</code>、<code>sleep</code> 等内置名字。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="code.claude.com/docs/en/code-mode.md · How Code Mode works">code.claude.com/docs/en/code-mode.md · How Code Mode works</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">```javascript theme={null}
+const files = await $`rg -l "function retryPolicy" src`.text();
+const target = files.trim().split("\n")[0];
+await edit(target, "maxAttempts: 3", "maxAttempts: 5");</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 2：Code Mode 中一次 REPL 调用的路径（根据官方文档整理）</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 640 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13">
+  <rect x="0" y="0" width="640" height="300" fill="#f7f8fa"/>
+  <rect x="20" y="20" width="130" height="44" rx="6" fill="#ffffff" stroke="#c9ced6"/>
+  <text x="85" y="47" text-anchor="middle" fill="#333">模型</text>
+  <rect x="200" y="20" width="200" height="44" rx="6" fill="#eaf0fd" stroke="#2457d6"/>
+  <text x="300" y="40" text-anchor="middle" fill="#1d2b4f">REPL 工具</text>
+  <text x="300" y="56" text-anchor="middle" fill="#555" font-size="11">auto mode 分类器审查整段代码</text>
+  <path d="M150 42 H196" stroke="#2457d6" stroke-width="1.5"/>
+  <rect x="200" y="96" width="200" height="56" rx="6" fill="#ffffff" stroke="#2457d6"/>
+  <text x="300" y="118" text-anchor="middle" fill="#333">JavaScript 脚本</text>
+  <text x="300" y="138" text-anchor="middle" fill="#666" font-size="11">变量与中间结果留在这里</text>
+  <path d="M300 64 V92" stroke="#2457d6" stroke-width="1.5"/>
+  <g fill="#ffffff" stroke="#c9ced6">
+    <rect x="40" y="186" width="120" height="40" rx="6"/><rect x="180" y="186" width="120" height="40" rx="6"/><rect x="320" y="186" width="120" height="40" rx="6"/><rect x="460" y="186" width="140" height="40" rx="6"/>
+  </g>
+  <g text-anchor="middle" fill="#333" font-size="12">
+    <text x="100" y="211">Bash（$）</text><text x="240" y="211">Edit / Write</text><text x="380" y="211">Read / Web</text><text x="530" y="211">MCP 工具</text>
+  </g>
+  <g stroke="#999" stroke-width="1.2" fill="none">
+    <path d="M260 152 L100 182"/><path d="M285 152 L240 182"/><path d="M315 152 L380 182"/><path d="M340 152 L530 182"/>
+  </g>
+  <text x="320" y="252" text-anchor="middle" fill="#555" font-size="12">每个嵌套调用：按原工具名过 deny / ask 规则与 PreToolUse hook</text>
+  <text x="320" y="272" text-anchor="middle" fill="#555" font-size="12">仅 shell 命令进 OS 沙箱；JS 本身与文件、Web、MCP 调用在沙箱外</text>
+  <path d="M200 124 H90 V68" stroke="#2457d6" stroke-width="1.5" fill="none"/>
+  <text x="96" y="100" fill="#2457d6" font-size="11">只返回最后一个表达式</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><h3>权限：审批粒度变了，但规则仍逐个调用生效</h3>
+<p>Code Mode 最容易被误解的地方是权限。文档写得很明确：脚本里的<strong>每个工具调用</strong>都以原工具名（<code>Bash</code> 或 MCP 工具名）经过 deny/ask 规则和 <code>PreToolUse</code> hook。变化在 auto mode：分类器审查的是<strong>整段代码</strong>，不是每次调用，因此看不到运行时才算出来的值（比如从搜索结果里取出的路径）。需要硬性控制的命令要靠规则或 hook，例如给 <code>Bash(git push *)</code> 加 ask 规则。</p>
+<p>hook 作者还要注意命令形态：Code Mode 下 <code>git push</code> 可能以 <code>cd 'app' &amp;&amp; git push</code> 的形式到达 hook，所以 hook 要像 Bash 规则那样拆开复合命令逐段检查。想先看代码再放行，可以给 <code>REPL</code> 本身加 ask 规则（右侧）；审批框里不显示代码，需要按 <code>Ctrl+O</code> 查看。运行中弹出的权限提示有两种拒绝：直接 No 或 Esc 会停止整段代码（已完成的修改保留）；带备注的 No 只拒绝这一次调用，脚本可以继续。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="~/.claude/settings.json · 每段代码运行前先审批">~/.claude/settings.json · 每段代码运行前先审批</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{
+  "permissions": {
+    "ask": ["REPL"]
+  }
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>沙箱与时长：JS 本身不在沙箱里</h3>
+<p>沙箱设置只约束脚本发出的 <strong>shell 命令</strong>。JavaScript 本身和它发起的文件、Web、MCP 调用都在沙箱外运行，要把它们也隔离，需要把整个 Claude Code 放进容器或虚拟机。开启 strict sandbox mode 后，脚本请求“以非沙箱方式运行命令”也会被拒绝。</p>
+<p>时长分两档：前台等待时脚本最多运行 10 分钟（v2.1.328 起，Manual 和 acceptEdits 模式下停在权限提示上的时间不计入）；以 auto 或 bypassPermissions 模式启动的会话可以让代码转入后台，最长 2 小时，期间用户可以继续和 Claude 对话，用 <code>/tasks</code> 停止。另一个细节：在会话运行过代码之后，<code>PreToolUse</code> hook 没给出决定（崩溃、超时）就会拒绝该调用，即便没有设置 <code>onFailure</code>。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>输出脱敏：在 PostToolUse 里改写脚本的返回值</h3>
+<p>脚本的返回值进入上下文前，可以被匹配 <code>REPL</code> 的 <code>PostToolUse</code> hook 读取和改写。<code>tool_response</code> 里有 <code>code</code>、<code>result</code>、<code>stdout</code>、<code>stderr</code>、<code>toolsUsed</code> 等字段（右上）；hook 返回同形状的 <code>updatedToolOutput</code> 即可替换（右下）。形状不对、hook 崩溃或超时，Claude 都会拿到原始输出，所以出错时也要返回带占位符的副本。文档另外提醒：<code>refusedCalls</code> 字段会原样重复被拒调用的输入，不能指望靠它脱敏；v2.1.328 起 <code>UserPromptSubmit</code> hook 不再收到代码输出，脱敏要统一放在 <code>PostToolUse</code>。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="PostToolUse 收到的 tool_response（code-mode.md）">PostToolUse 收到的 tool_response（code-mode.md）</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">```json theme={null}
+{
+  "code": "(await $`cat notes.txt`.text())",
+  "result": "deploy token: abc123",
+  "stdout": "",
+  "stderr": "",
+  "toolsUsed": ["Bash"]
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="PostToolUse hook 返回的 updatedToolOutput（code-mode.md）">PostToolUse hook 返回的 updatedToolOutput（code-mode.md）</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">```json theme={null}
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "updatedToolOutput": {
+      "code": "(await $`cat notes.txt`.text())",
+      "result": "deploy token: REDACTED",
+      "stdout": "",
+      "stderr": "",
+      "toolsUsed": ["Bash"]
+    }
+  }
+}
+```</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>思想来源：从“MCP 即代码”到 Programmatic Tool Calling</h3>
+<p>Code Mode 不是凭空出现的。2025-11-04 的《Code execution with MCP》指出两个问题：工具定义占满上下文，中间结果在工具之间反复穿过模型。解法是把 MCP server 呈现为文件系统上的代码 API（每个工具一个 <code>.ts</code> 文件），模型按需读定义、写代码编排、只打印需要的结果，示例任务从 150,000 tokens 降到 2,000。文章明确提到 Cloudflare 把同一思路称为 “Code Mode”，也列出了代价：要有安全的执行环境、资源限制和监控。</p>
+<p>2025-11-24 这个思路被做进 API：<strong>Tool Search Tool</strong>（工具标 <code>defer_loading: true</code>，按需搜索加载，token 减少 85%，Opus 4.5 的 MCP 评测从 79.5% 升到 88.1%）和 <strong>Programmatic Tool Calling</strong>（PTC）。PTC 里 Claude 在 API 侧的代码执行沙箱写 Python，脚本调用到工具时暂停，开发者收到带 <code>caller</code> 字段的 <code>tool_use</code>（右侧），结果回到脚本而不是模型上下文。复杂研究任务的平均 token 从 43,588 降到 27,297。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/advanced-tool-use · 由代码发起的工具调用带 caller 字段">anthropic.com/engineering/advanced-tool-use · 由代码发起的工具调用带 caller 字段</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">```
+{
+  "type": "tool_use",
+  "id": "toolu_xyz",
+  "name": "get_expenses",
+  "input": {"user_id": "emp_123", "quarter": "Q3"},
+  "caller": {
+    "type": "code_execution_20250825",
+    "tool_id": "srvtoolu_abc"
+  }
+}
+```</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th></th><th>直接工具调用</th><th>Programmatic Tool Calling（API）</th><th>Code Mode（Claude Code）</th></tr></thead>
+  <tbody>
+    <tr><td>谁编排多个调用</td><td>模型，每次调用一次推理</td><td>模型写的 Python 脚本</td><td>模型写的 JavaScript 脚本</td></tr>
+    <tr><td>代码在哪运行</td><td>—</td><td>API 侧的 code execution 沙箱</td><td>本机 Claude Code 会话内</td></tr>
+    <tr><td>工具结果去哪</td><td>全部进上下文</td><td>回到脚本，只有 stdout 进上下文</td><td>回到脚本，只有最后表达式进上下文</td></tr>
+    <tr><td>谁执行工具</td><td>harness</td><td>开发者（收到带 <code>caller</code> 的 tool_use）</td><td>Claude Code，走原有权限、hook、沙箱链路</td></tr>
+    <tr><td>审批粒度</td><td>每次调用</td><td>由开发者的工具实现决定</td><td>规则与 hook 逐调用；auto mode 分类器按整段代码</td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><h3>使用门槛与限制</h3>
+<p>要求 v2.1.323 以上，用 Claude 订阅或 Console 账号<strong>直连</strong> Anthropic API（网关、Bedrock、Vertex、Foundry 等都不行），组织未开 HIPAA 或零数据保留，模型为 Opus 5.5、Sonnet 5.5、Haiku 5.5 或 Fable 5.2，只能在交互终端里用（<code>-p</code>、Agent SDK、VS Code、桌面应用、云会话都不支持）。开关是 <code>CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1</code>，项目 settings 里的这个变量会被忽略，避免克隆来的仓库替你打开；managed settings 可以设 <code>0</code> 全组织禁用，但不能强制打开。Code Mode 会话只能在开着 Code Mode 的终端里恢复，且不能使用 Remote Control、Claude in Chrome 和 computer use。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>扩展层：按“上下文成本”和“确定性”给每种扩展定位</h2>
+<div class="row row-only-text"><div class="row-text"><p>官方把扩展分成三类：<strong>常驻上下文</strong>（CLAUDE.md、<code>.claude/rules/</code>、output style）、<strong>按需能力</strong>（skills、MCP、LSP、子代理、workflow、跨会话消息）和<strong>事件自动化</strong>（hooks），plugins 和 marketplace 是打包分发层。选哪种，看两件事：它每次请求要占多少上下文，以及它是不是必须每次都发生。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>扩展</th><th>何时加载</th><th>加载什么</th><th>上下文成本</th></tr></thead>
+  <tbody>
+    <tr><td>CLAUDE.md</td><td>会话开始</td><td>每个文件全文</td><td>每次请求</td></tr>
+    <tr><td>Output style</td><td>会话开始、切换时</td><td>当前样式的完整指令</td><td>每次请求</td></tr>
+    <tr><td>Skills</td><td>会话开始 + 使用时</td><td>开始只加载描述，使用时加载正文</td><td>低（描述每次请求）</td></tr>
+    <tr><td>MCP</td><td>会话开始</td><td>工具名；schema 按需</td><td>工具未使用前很低</td></tr>
+    <tr><td>Code intelligence</td><td>编辑后与查询时</td><td>诊断、符号位置</td><td>低，且减少读文件</td></tr>
+    <tr><td>Subagents</td><td>启动时</td><td>全新上下文（fork 则复制父对话）</td><td>与主会话隔离</td></tr>
+    <tr><td>Hooks</td><td>事件触发</td><td>不加载</td><td>零，除非返回附加上下文</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><h3>指令文件：叠加、懒加载，并且要短</h3>
+<p>CLAUDE.md 从当前目录向上逐级加载并<strong>拼接</strong>（根目录在前，越靠近工作目录越靠后），子目录里的 CLAUDE.md 等到 Claude 读写该目录文件时才加载；块级 HTML 注释在注入前会被剥掉，可以给人留备注而不花 token。官方建议控制在 200 行以内，因为“更长的指令文件会降低遵循度”。<code>.claude/rules/</code> 下的规则可以用 <code>paths</code> 限定作用范围（右侧示例），只有处理匹配文件时才加载。v2.1.277 起可以直接读 AGENTS.md：仓库只有 AGENTS.md 时读它，同时有 CLAUDE.md 时默认只读 CLAUDE.md。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title=".claude/rules/*.md · 只在处理匹配文件时加载的规则（memory.md）">.claude/rules/*.md · 只在处理匹配文件时加载的规则（memory.md）</span><span class="panel-lang">Markdown</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>---
+paths:
+  - "src/api/**/*.ts"
+---
+
+# API Development Rules
+
+- All API endpoints must include input validation
+- Use the standard error response format
+- Include OpenAPI documentation comments</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>Skills：三级渐进披露</h3>
+<p>Skill 是一个带 <code>SKILL.md</code> 的目录。第一级，启动时只把每个 skill 的名字和描述放进上下文；第二级，Claude 判断相关时读入整个 <code>SKILL.md</code>；第三级，<code>SKILL.md</code> 引用的附加文件和脚本按需读取或直接执行，脚本本身不必进上下文。因为有文件系统和代码执行，一个 skill 能打包的内容“实际上没有上限”。右侧是文档里的最小示例：<code>description</code> 决定 Claude 何时自动加载它；<code>!`git diff HEAD`</code> 这行是动态上下文注入，Claude Code 先执行命令、用输出替换这一行，Claude 拿到的是已经带着 diff 的指令。</p>
+<p>有副作用的 skill 建议设 <code>disable-model-invocation: true</code>，这样连描述都不进上下文，只能由用户用 <code>/名字</code> 调用。skill 可以通过 <code>context: fork</code> 在隔离上下文中运行，子代理也可以用 <code>skills:</code> 字段预载 skill 全文。Agent Skills 已在 2025-12-18 作为开放标准发布。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="~/.claude/skills/summarize-changes/SKILL.md（skills.md 示例）">~/.claude/skills/summarize-changes/SKILL.md（skills.md 示例）</span><span class="panel-lang">Markdown</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>---
+description: Summarizes uncommitted changes and flags anything risky. Use when the user asks what changed, wants a commit message, or asks to review their diff.
+---
+
+## Current changes
+
+!`git diff HEAD`
+
+## Instructions
+
+Summarize the changes above in two or three bullet points, then list any risks you notice such as missing error handling, hardcoded values, or tests that need updating. If the diff is empty, say there are no uncommitted changes.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>MCP：默认只放工具名，定义按需搜索</h3>
+<p>MCP 工具定义默认 deferred：会话开始只加载工具名和 server instructions，完整 schema 在 Claude 需要时通过 tool search（<code>ToolSearch</code> 工具）加载，因此接入更多 server 对上下文影响很小，也没有固定的单 server 工具上限。server instructions 和常驻工具描述的截断上限是 4,096 字符，经搜索加载的工具描述是 16,384 字符，所以关键说明要写在前面。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>Hooks：把“必须发生”的事从提示词里拿出来</h3>
+<p>Hooks 是 harness 生命周期上的确定性扩展点。事件覆盖会话（SessionStart、SessionEnd）、提示（UserPromptSubmit）、工具（PreToolUse、PostToolUse、PostToolBatch）、权限（PermissionRequest、PermissionDenied）、子代理与任务、Stop、压缩前后、模型切换、worktree、文件变化、MCP elicitation 等三十多个。处理器有五种：<strong>command</strong>（脚本，stdin 收 JSON）、<strong>http</strong>、<strong>mcp_tool</strong>、<strong>prompt</strong>（单轮模型判定）、<strong>agent</strong>（带工具的子代理验证，最多 50 轮）。退出码 2 表示阻断，stderr 作为原因；同一事件的匹配 hook 并行执行。</p>
+<p>官方给出的原则是：“Put guardrails in hooks.” 写在 CLAUDE.md 或 skill 里的“不要改 .env”只是请求，<code>PreToolUse</code> hook 拦下编辑才是强制。右侧是文档里的配置示例：对所有 memory server 的调用记日志，对任何 MCP server 的写操作跑校验脚本。不同来源的 hooks 是合并后全部触发的，而 skills、子代理、MCP server 则按名字覆盖。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="settings.json · hooks 配置示例（hooks.md）">settings.json · hooks 配置示例（hooks.md）</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__memory__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Memory operation initiated' &gt;&gt; ~/mcp-operations.log"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__write.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/user/scripts/validate-mcp-write.py"
+          }
+        ]
+      }
+    ]
+  }
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>更深一层是 <strong>mods</strong>：它也是插件的一种，但由 JavaScript/TypeScript 事件处理器组成，运行在 Claude Code 进程内部，可以观察、修改或接管工具调用、提交的 prompt 和界面绘制；与 settings hooks 不同，它的文件、网络和进程访问不受沙箱约束。Output style 则只管“怎么回答”（角色、语气、格式），与 CLAUDE.md 管“知道什么”分开，同一时间只有一个生效。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>多代理四档：区别在于谁持有计划</h2>
+<div class="row row-only-text"><div class="row-text"><p>Claude Code 提供四种并行方式，官方用“谁决定下一步做什么、中间结果放在哪”来区分。<strong>Subagent</strong> 是 Claude 派出的工人，有自己的上下文窗口，只把摘要交回；<strong>fork</strong> 是带着完整父对话的子代理；<strong>agent teams</strong> 是一个 lead 会话监督多个对等的 Claude Code 实例；<strong>dynamic workflow</strong> 是 Claude 写一段脚本，由运行时执行，计划和中间结果都在代码里。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th></th><th>Subagents</th><th>Agent teams</th><th>Dynamic workflows</th></tr></thead>
+  <tbody>
+    <tr><td>谁决定下一步</td><td>Claude，逐轮决定</td><td>lead agent，逐轮决定</td><td>脚本</td></tr>
+    <tr><td>中间结果在哪</td><td>Claude 的上下文窗口</td><td>共享任务列表</td><td>脚本变量</td></tr>
+    <tr><td>可复用的是什么</td><td>工人定义</td><td>团队定义</td><td>编排本身</td></tr>
+    <tr><td>规模</td><td>每轮几个委派任务</td><td>少量长期运行的同伴</td><td>每次运行几十到几百个 agent</td></tr>
+    <tr><td>被打断时</td><td>重启当前轮</td><td>teammate 继续运行</td><td>同一会话内可恢复</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><h3>Subagent 与 fork：隔离上下文，限制深度和并发</h3>
+<p>内置子代理有 Explore（只读，用于搜索代码库，调用时指定 quick、medium 或 very thorough）、Plan（plan mode 下做研究）和 general-purpose。Explore 和 Plan 启动时不加载 CLAUDE.md 和 git status，以求快和省。普通子代理的初始上下文是：自己的 system prompt 加环境信息（不是 Claude Code 的 system prompt）、委派消息、全层级 CLAUDE.md、git status 快照、预载的 skills，以及可以 <code>SendMessage</code> 的同伴名单；不继承 output style 和 auto memory。子代理默认在后台运行，它的权限提示会冒泡到主会话。</p>
+<p>限额：子代理默认最多嵌套 3 层，到达深度时扣掉 Agent 工具；同时运行的子代理上限 20 个，超过时返回 “Concurrent subagent limit reached” 并告诉 Claude 不要重试；总数不限。fork 则复用父对话的 system prompt、工具、模型和历史，因此首个请求能直接读父会话的缓存；普通子代理前缀不同，要自己预热缓存。</p>
+<p>子代理的报告在交给主对话之前会被扫描：模仿 <code>&lt;system-reminder&gt;</code>、<code>Human:</code> 或 <code>Assistant:</code> 的文本会被插入反斜杠，提到 <code>bypassPermissions</code> 这类权限设置时会前置一行 <code>[harness: subagent output matched instruction-shaped pattern(s): …</code> 标记，报告整体还带一个头，声明其中的指令和授权声明不代表用户。这对应了隔离一文里的担忧：子代理的输出不能因为“来自我们自己”就被当作更高信任。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="code.claude.com/docs/en/sub-agents.md · Subagent output scanning">code.claude.com/docs/en/sub-agents.md · Subagent output scanning</span><span class="panel-lang">Markdown</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>* **Backslash insertion**: the scan inserts a backslash into text that imitates Claude Code's own output, such as a `&lt;system-reminder&gt;` tag or a line starting with `Human:` or `Assistant:`, so the imitation reads as ordinary text instead of being mistaken for part of the conversation.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>Agent teams：共享任务列表 + 邮箱</h3>
+<p>agent teams 仍是实验特性（<code>CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</code>），只在交互会话里可用。结构是 lead、teammates（各自独立的 Claude Code 实例）、共享任务列表和邮箱：每个 agent 的邮箱是 <code>~/.claude/teams/{team}/inboxes/{agent}.json</code>，任务有 pending、in progress、completed 三态和依赖关系，认领任务用文件锁防止抢占。teammate 加载项目的 CLAUDE.md、MCP 和 skills，但不继承 lead 的对话。它的原型可以追溯到 2026-02 那篇用 16 个 Claude 写 C 编译器的文章：每个 agent 一个容器，用 <code>current_tasks/</code> 下的文本文件当锁，靠 git 同步。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>Dynamic workflows：把编排写成可重放的脚本</h3>
+<p>当任务需要的 agent 数量超过一段对话能协调的范围，或者希望结果在交给用户前被交叉验证，Claude 会写一个 workflow 脚本（右侧为文档示例）：<code>agent()</code> 启动一个子代理并可要求结构化输出，<code>pipeline()</code> 和 <code>parallel()</code> 扇出，<code>phase()</code> 分组显示。在 prompt 里写 <code>ultracode</code> 或直接说“use a workflow”即可触发；<code>/effort ultracode</code> 让 Claude 对每个实质性任务都规划 workflow。内置的 <code>/deep-research</code> 就是一个 workflow：多角度搜索、交叉核验、对每条结论投票，输出带引用的报告。</p>
+<p>运行时的约束都是为了<strong>可恢复</strong>：脚本本身不能访问文件和 shell、不能 <code>import()</code>；<code>Date.now()</code>、<code>Math.random()</code> 会抛错，保证重放时发出同样的 <code>agent()</code> 调用。恢复时按 agent 启动顺序重放：已完成的直接返回保存的结果，从第一个 prompt 变化或失败的 agent 开始，其后全部重跑。默认 16 个并发（可调到 256），单次 <code>parallel()</code> 或 <code>pipeline()</code> 不超过 4,096 项，单次运行不超过 1,000 个 agent。扇出时，前缀相同的 agent 会等第一个开始响应后再放行（默认最多等 5 秒），以共享它刚写入的 prompt cache。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="workflow 脚本示例（code.claude.com/docs/en/workflows.md）">workflow 脚本示例（code.claude.com/docs/en/workflows.md）</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">export const meta = {
+  name: 'audit-routes',
+  description: 'Audit every route handler for missing auth checks',
+}
+
+const found = await agent('List every .ts file under src/routes/.', {
+  schema: { type: 'object', required: ['files'], properties: { files: { type: 'array', items: { type: 'string' } } } },
+})
+
+const audits = await pipeline(found.files, file =&gt;
+  agent(`Audit ${file} for missing authentication checks.`, { label: file }),
+)
+
+return audits.filter(Boolean)</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>安全：环境隔离兜底，分类器减负</h2>
+<div class="row"><div class="row-text"><p>Claude Code 的权限系统由四层叠成：<strong>模式</strong>定基线，<strong>规则</strong>（allow/ask/deny，按工具名和参数匹配）做精细控制，<strong>hooks 和 mods</strong> 做自定义判断，<strong>OS 沙箱</strong>封住 shell 命令能触及的范围。六种模式分别是 <code>default</code>（Manual）、<code>acceptEdits</code>、<code>plan</code>、<code>auto</code>、<code>dontAsk</code>（CI 用，凡是会提示的都拒绝）和 <code>bypassPermissions</code>（只该在隔离的容器或 VM 里用）。deny 规则在所有模式下都生效，包括 bypass。</p>
+<p>有些动作任何模式都不会自动批准：显式的 ask 规则、组织设为 ask 的 connector 工具、需要用户交互的工具（AskUserQuestion 和标了 <code>requiresUserInteraction</code> 的 MCP 工具）、针对关键路径的 <code>rm</code>/<code>rmdir</code>、跨会话消息的保护，以及开启相应设置后在工作目录之外的读写。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 3：auto mode 下一次工具调用的判定顺序（根据工程博客与 permission-modes 文档整理）</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 640 400" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13">
+  <rect x="0" y="0" width="640" height="400" fill="#f7f8fa"/>
+  <g fill="#ffffff" stroke="#c9ced6">
+    <rect x="20" y="20" width="200" height="40" rx="6"/>
+    <rect x="20" y="88" width="200" height="52" rx="6"/>
+    <rect x="20" y="168" width="200" height="52" rx="6"/>
+  </g>
+  <rect x="20" y="248" width="200" height="52" rx="6" fill="#eaf0fd" stroke="#2457d6"/>
+  <rect x="20" y="328" width="200" height="52" rx="6" fill="#eaf0fd" stroke="#2457d6"/>
+  <g fill="#333">
+    <text x="120" y="45" text-anchor="middle">模型发出工具调用</text>
+    <text x="32" y="110">1 allow / ask / deny 规则</text><text x="32" y="129" fill="#666" font-size="11">进入 auto 时丢弃宽泛的解释器规则</text>
+    <text x="32" y="190">2 只读操作、项目内编辑</text><text x="32" y="209" fill="#666" font-size="11">直接放行，不付分类器延迟</text>
+    <text x="32" y="270" fill="#1d2b4f">3 阶段一：单 token 过滤</text><text x="32" y="289" fill="#555" font-size="11">指令要求倾向拦截</text>
+    <text x="32" y="350" fill="#1d2b4f">4 阶段二：带推理复核</text><text x="32" y="369" fill="#555" font-size="11">只处理阶段一标记的动作</text>
+  </g>
+  <g stroke="#999" stroke-width="1.5" fill="none">
+    <path d="M120 60 V84"/><path d="M120 140 V164"/><path d="M120 220 V244"/><path d="M120 300 V324"/>
+  </g>
+  <rect x="300" y="168" width="150" height="52" rx="6" fill="#ffffff" stroke="#c9ced6"/>
+  <text x="375" y="190" text-anchor="middle" fill="#333">执行</text><text x="375" y="208" text-anchor="middle" fill="#666" font-size="11">shell 命令进 OS 沙箱</text>
+  <rect x="300" y="248" width="150" height="52" rx="6" fill="#ffffff" stroke="#c9ced6"/>
+  <text x="375" y="270" text-anchor="middle" fill="#333">注入探针</text><text x="375" y="288" text-anchor="middle" fill="#666" font-size="11">扫描工具结果，可疑则加警告</text>
+  <rect x="300" y="328" width="150" height="52" rx="6" fill="#ffffff" stroke="#c9ced6"/>
+  <text x="375" y="350" text-anchor="middle" fill="#333">拒绝并继续</text><text x="375" y="368" text-anchor="middle" fill="#666" font-size="11">理由作为工具结果返回</text>
+  <g stroke="#2457d6" stroke-width="1.5" fill="none">
+    <path d="M220 194 H296"/><path d="M220 274 H260 V200 H296"/><path d="M220 354 H296"/><path d="M375 220 V244"/>
+  </g>
+  <text x="228" y="188" fill="#2457d6" font-size="11">放行</text>
+  <text x="228" y="268" fill="#2457d6" font-size="11">未标记</text>
+  <text x="228" y="348" fill="#2457d6" font-size="11">确认危险</text>
+  <rect x="480" y="168" width="140" height="212" rx="6" fill="#ffffff" stroke="#c9ced6"/>
+  <g fill="#444" font-size="11">
+    <text x="492" y="190">分类器只看：</text><text x="492" y="208">· 用户消息</text><text x="492" y="226">· 工具调用本身</text>
+    <text x="492" y="252">不看：</text><text x="492" y="270">· assistant 文字</text><text x="492" y="288">· 工具输出</text>
+    <text x="492" y="318">连续 3 次或累计</text><text x="492" y="336">20 次拒绝后</text><text x="492" y="354">交还给人；-p 下</text><text x="492" y="372">终止或跳过动作</text>
+  </g>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><h3>OS 沙箱：同时隔离文件和网络</h3>
+<p>2025-10 发布的沙箱用 OS 原语实现：Linux 用 bubblewrap，macOS 用 Seatbelt，限制覆盖命令派生的所有子进程。文件上允许读写当前工作目录、阻止修改其外的文件；网络上只能经 unix domain socket 连到沙箱外的代理，由代理按域名放行，并对新域名向用户确认（右侧原文）。博客强调两者缺一不可：没有网络隔离，被注入的 agent 可以外传 SSH key；没有文件隔离，它可以改配置逃出沙箱。内部使用中，沙箱让权限提示减少了 84%，运行时已开源。</p>
+<p>边界在哪里同样重要：沙箱只包 shell 命令。Read、Edit、Write、WebFetch、WebSearch 走权限规则而非沙箱（<code>denyRead</code> 不拦 Read 工具，<code>allowedDomains</code> 不限 WebFetch），command hooks、本地 MCP server、LSP、mods 也都在沙箱外；用户自己在 <code>!</code> 后输入的命令通常也不进沙箱。Claude 可以用 <code>dangerouslyDisableSandbox</code> 请求非沙箱重试，strict 模式（<code>allowUnsandboxedCommands: false</code>）可以关掉这条路，由管理员设置时仓库里放宽沙箱的配置会被忽略。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/claude-code-sandboxing · 两条边界">anthropic.com/engineering/claude-code-sandboxing · 两条边界</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>- Filesystem isolation, by allowing read and write access to the current working directory, but blocking the modification of any files outside of it.
+
+- Network isolation, by only allowing internet access through a unix domain socket connected to a proxy server running outside the sandbox. This proxy server enforces restrictions on the domains that a process can connect to, and handles user confirmation for newly requested domains. And if you’d like further-increased security, we also support customizing this proxy to enforce arbitrary rules on outgoing traffic.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>Auto mode：两阶段分类器替人审批</h3>
+<p>auto mode 的动机是一个数字：用户实际会批准 93% 的权限提示，审批疲劳让“逐条确认”名存实亡。它用模型分类器替代人，判定顺序见图 3。第一层是内置的安全工具白名单和用户 allow 规则，但<strong>进入 auto mode 时会丢弃已知能任意执行代码的规则</strong>（全量 shell、通配的 python/node/ruby 解释器、包管理器的 run 命令），否则分类器永远看不到最危险的命令；第二层是项目内的文件读写，直接放行；其余动作进入分类器。分类器分两阶段：阶段一只输出一个 token、并被要求倾向拦截；只有被标记的动作才进入阶段二做带推理的复核。两阶段输入相同、只改最后一句指令，所以阶段二几乎全部命中缓存。</p>
+<p>分类器是刻意“reasoning-blind”的：只看用户消息和工具调用本身，去掉 assistant 的文字和工具输出（右侧原文）。去掉 assistant 文字，是为了不让 agent 用“用户之前默许过”这类说辞说服分类器；去掉工具输出，是对 prompt injection 的结构性防御，因为恶意内容正是从工具输出进来的。代价是失去来源信息：用户没提过的任务 ID，分类器分不清是查出来的还是编出来的。工具输出那一侧另有一个服务端注入探针，可疑时给 agent 加警告。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/claude-code-auto-mode · 为什么去掉 assistant 文字">anthropic.com/engineering/claude-code-auto-mode · 为什么去掉 assistant 文字</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>We strip assistant text so the agent can't talk the classifier into making a bad call. The agent could generate persuasive rationalizations, such as "this is safe because the user implicitly approved it earlier," or "this target is definitely agent-owned." If the classifier reads those, it can be talked into the wrong decision. Instead, we want it to judge what the agent did, not what the agent said.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/claude-code-auto-mode · Deny-and-continue">anthropic.com/engineering/claude-code-auto-mode · Deny-and-continue</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>When the transcript classifier flags an action as dangerous, that denial comes back as a tool result along with an instruction to treat the boundary in good faith: find a safer path, don't try to route around the block. If a session accumulates 3 consecutive denials or 20 total, we stop the model and escalate to the human. This is the backstop against a compromised or overeager agent repeatedly pushing towards an outcome the user wouldn't want. In headless mode (`claude -p`) there is no UI to ask the human, so we instead terminate the process.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>分类器的提示词是固定模板加三个可定制槽：信任边界（默认只信任当前 git 仓库）、拦截规则（默认 20 多条，分为销毁或外传、削弱安全态势、跨越信任边界、绕过审查或影响他人四组）和例外。模板要求按真实影响而不是表面文本判断：先写文件再执行，就评估文件内容；<code>&amp;&amp;</code> 连起来的命令算一个动作；“clean up my branches” 不等于授权批量删除，“can we fix this?” 是问题而不是指令。子代理在委派时和返回时各过一次分类器。博客公布的评测如下：</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>数据集</th><th>阶段一</th><th>阶段一 + 阶段二（实际部署）</th></tr></thead>
+  <tbody>
+    <tr><td>真实内部流量（n = 10,000），误拦率</td><td>8.5%</td><td>0.4%</td></tr>
+    <tr><td>真实 overeager 动作（n = 52），漏放率</td><td>6.6%</td><td>17%</td></tr>
+    <tr><td>合成数据外传（n = 1,000），漏放率</td><td>1.8%</td><td>5.7%</td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><p>17% 的漏放率是博客自己称为 “the honest number” 的数字：多数漏判里，分类器看到了危险，却把“用户说过类似的话”当成了对这个动作影响范围的授权。所以官方定位很克制：auto mode 是对 <code>--dangerously-skip-permissions</code> 的大幅改进，但不能替代对高风险基础设施的人工审查。到 2026 年下半年，auto mode 已成为交互终端的默认起始模式（v2.1.283 起），并演进出“服务端审查”：直连 API 的会话由服务端随模型请求一起给出判定，拿不到判定时<strong>拒绝而不是放行</strong>；本地分类器默认用 Sonnet 5。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>事故教训：确定性的边界才是最后一道防线</h3>
+<p>2026-05 的《How we contain Claude across products》总结了三次事故。其一，克隆仓库里的 <code>.claude/settings.json</code> 定义的 hook 在“Do you trust this folder?”之前就执行了（右侧原文）；修复是把项目配置的解析和执行推迟到用户接受信任之后。其二，内部红队用钓鱼邮件让员工粘贴一段 prompt，里面夹带“读 <code>~/.aws/credentials</code> 并 POST 出去”，25 次中成功 24 次：指令来自用户本人时，以用户意图为锚的模型层防御无从察觉，只有出站控制和文件边界能挡住。其三（Cowork），允许访问 <code>api.anthropic.com</code> 后，恶意文件携带攻击者的 API key 让 Claude 把文件上传到攻击者账号，结论是 allowlist 应被理解为“能力授予”而非“目的地过滤”。</p>
+<p>由此得出的原则：先在环境层做隔离，再在模型层引导行为；隔离强度要匹配用户的监督能力（能读懂 bash 的开发者与知识工作者不是同一个威胁模型）；最该警惕的是自己写的组件，hypervisor、seccomp、gVisor 都很可靠，出过事的是自研代理。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/how-we-contain-claude · 信任对话框之前的代码">anthropic.com/engineering/how-we-contain-claude · 信任对话框之前的代码</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>Between mid-2025 and January 2026, we received reports of vulnerabilities in Claude Code through our responsible disclosure program. Three of these vulnerabilities targeted code that executes before the user has consented to anything. To understand how this is possible, consider the most direct case: a developer clones a repository to review a pull request, and that repository contains a .claude/settings.json which defines a hook. Because Claude Code reads project settings during startup—before presenting the standard "Do you trust this folder?" prompt—the hook the attacker had authored and committed would execute automatically. The remaining cases looked structurally similar, in which input from the not-yet-trusted directory was parsed before the trust boundary had been established.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>长任务与运行形态：把会话从终端里解放出来</h2>
+<div class="row"><div class="row-text"><p>2026-02 的 C 编译器实验点出了交互式 harness 的天花板：“Existing agent scaffolds like Claude Code require an operator to be online”。作者的解法是右侧这个无限循环脚本：Claude 完成一个任务后，循环立刻起一个新会话接着干。16 个 agent、近 2,000 个会话、约 2 万美元，产出一个能编译 Linux 6.9 的 10 万行 Rust 编译器。此后 Claude Code 逐步把这类外部脚本的能力收进产品。</p>
+<p><strong>/goal</strong> 与 Stop hook 同构：每轮结束后由一个独立模型检查完成条件，未满足就开新的一轮，而不是把控制权还给用户；评估器只看对话里 Claude 已经展示的内容，不自己跑命令，所以条件要写成“能被输出证明”的形式（例如“<code>npm test</code> 退出码为 0”），最长 4,000 字符。它与 auto mode 互补：auto mode 只在一轮之内放行工具调用，不会开新的一轮。<strong>/loop</strong> 和会话内 Cron 工具按时间间隔重跑 prompt，<code>ScheduleWakeup</code> 让 Claude 自己决定下次何时醒来。<strong>Channels</strong> 是反方向：MCP server 把外部事件（如 Telegram、Discord 消息）主动推进正在运行的会话。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/building-c-compiler · 让 Claude 不停工作的外层循环">anthropic.com/engineering/building-c-compiler · 让 Claude 不停工作的外层循环</span><span class="panel-lang">Shell</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-bash">#!/bin/bash
+
+while true; do
+    COMMIT=$(git rev-parse --short=6 HEAD)
+    LOGFILE="agent_logs/agent_${COMMIT}.log"
+
+    claude --dangerously-skip-permissions \
+           -p "$(cat AGENT_PROMPT.md)" \
+           --model claude-opus-X-Y &amp;&gt; "$LOGFILE"
+done</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>会话不再依附于终端</h3>
+<p>后台会话（<code>claude agents</code> 打开 agent view）由独立的 supervisor 进程托管，关掉终端也照常运行；状态落盘，能挺过自动更新、supervisor 重启和睡眠唤醒，修改代码前会被要求先建 worktree。<strong>Remote Control</strong> 让手机和网页成为本机会话的窗口，执行和文件始终留在本机。<strong>云会话</strong>运行在 Anthropic 管理的 VM 或组织自托管环境里：GitHub 凭据加密保存在服务端、从不进入 VM，git 操作经代理，由代理校验后附加凭据（例如只允许 push 到配置的分支）；network secrets 同样在沙箱外附加到匹配的请求上。<strong>云端定时任务</strong>（原 routines）把 prompt、仓库和 connectors 存成配置，由时间表、API 调用或 GitHub 事件触发。会话之间还可以用 cross-session messaging 互发消息。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>Managed Agents：把 harness 本身做成可替换的</h3>
+<p>2026-04 的《Scaling Managed Agents》把视角再上提一层。早期把 session、harness 和沙箱放在同一个容器里，容器就成了不能丢的“宠物”。拆开后，agent 被抽象成三个接口：只追加的 <strong>session</strong> 事件日志、调用模型并路由工具的 <strong>harness</strong>、执行代码的<strong>沙箱</strong>。容器只是一个工具（右侧原文）：挂了就是一次工具调用错误，交给 Claude 决定是否重建；harness 挂了，用 <code>wake(sessionId)</code> 和 <code>getSession(id)</code> 从最后一个事件恢复。凭据永不进沙箱：git token 在初始化时写进 remote，MCP 的 OAuth token 存在 vault 里由代理使用。容器按需创建后，p50 首 token 时间下降约 60%，p95 下降超过 90%。</p>
+<p>这篇文章开头的一句话可以作为整份报告的注脚：harness 编码了“Claude 自己做不到什么”的假设，而这些假设会随着模型变强而过时。例子是 Sonnet 4.5 临近上下文上限时会提前收尾（“context anxiety”），于是 harness 加了 context reset；换到 Opus 4.5 后这个行为消失，reset 成了累赘。长时运行 harness 的两篇文章也走过同样的路：从 initializer + coding agent，到 planner、generator、evaluator 三代理加 sprint contract，再在 Opus 4.6 上逐个拆掉组件、确认哪些仍然承重。新模型默认不给 TodoWrite、Glob/Grep 并入 Bash，都是同一逻辑的产物。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="anthropic.com/engineering/managed-agents · brain 与 hands 解耦">anthropic.com/engineering/managed-agents · brain 与 hands 解耦</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>The harness leaves the container. Decoupling the brain from the hands meant the harness no longer lived inside the container. It called the container the way it called any other tool: `execute(name, input) → string`. The container became cattle. If the container died, the harness caught the failure as a tool-call error and passed it back to Claude. If Claude decided to retry, a new container could be reinitialized with a standard recipe: `provision({resources})`. We no longer had to nurse failed containers back to health.</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>设计取舍总览：每个选择都在付一种代价</h2>
+<div class="row row-only-text"><div class="row-text"><p>把前面的设计放在一起看，可以归纳出下表。左列是选择，中间是官方给出的理由，右列是文档或博客里承认的代价。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>设计选择</th><th>理由</th><th>代价或局限</th></tr></thead>
+  <tbody>
+    <tr><td>每轮重发完整上下文 + 三层前缀缓存</td><td>无状态、实现简单，缓存命中时成本近似线性</td><td>切模型、改工具集、压缩都会让缓存重建；功能设计受“别破坏前缀”约束</td></tr>
+    <tr><td>CLAUDE.md 预加载，其余 just-in-time 检索</td><td>避免预建索引过期，按需取用</td><td>探索比读预计算结果慢；CLAUDE.md 越长遵循度越低</td></tr>
+    <tr><td>自动压缩 + 定向重注入</td><td>让会话越过上下文上限继续</td><td>早期细节可能丢失；带 <code>paths</code> 的规则会被摘要掉</td></tr>
+    <tr><td>精简工具面（Glob/Grep 并入 Bash，新模型去掉 TodoWrite）</td><td>少一次往返，少占上下文</td><td>更多操作以 <code>Bash</code> 身份出现，规则和 hook 要按命令文本写</td></tr>
+    <tr><td>Code Mode</td><td>多步工具调用一次推理完成，中间结果不进上下文</td><td>auto mode 看不到运行时值；JS 在沙箱外；仅限交互终端和直连 API</td></tr>
+    <tr><td>Hooks 作为强制手段</td><td>确定执行、零上下文成本</td><td>hook 本身是代码执行面，需要信任边界（事故一）</td></tr>
+    <tr><td>四档多代理</td><td>按任务规模选择隔离和编排方式</td><td>token 消耗成倍增加；子代理输出需要防注入扫描</td></tr>
+    <tr><td>OS 沙箱只包 shell 命令</td><td>开销低，不用搬到容器，提示减少 84%</td><td>文件/Web 工具、hooks、MCP、mods 在沙箱外，统一边界需容器或 VM</td></tr>
+    <tr><td>Auto mode 两阶段、reasoning-blind 分类器</td><td>替代审批疲劳下的人工确认，误拦率 0.4%</td><td>对真实 overeager 动作漏放 17%；看不到来源信息</td></tr>
+    <tr><td>会话与执行解耦（后台、远程、云、Managed Agents）</td><td>会话不依附终端，执行环境可替换</td><td>每个新运行形态都有各自的限制，例如 Code Mode 不能转入后台会话</td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><p>几处值得留意的局限。第一，Code Mode 和 agent teams 仍是实验特性，文档明确说可能改变或移除，上面的版本门槛和限额会快速变化。第二，权限体系的复杂度本身就是风险：同一条“禁止”在 CLAUDE.md、规则、hook、沙箱里含义不同，文档专门提醒 Bash 规则按命令文本匹配，换一种写法就可能绕开。第三，Anthropic 自己的展望点名了两个未解决的问题：跨会话保存的上下文（CLAUDE.md、记忆、定时任务的状态目录）会成为持久投毒的载体；多代理系统里，给子代理输出更高信任会打开新的注入路径。</p>
+<blockquote><p>如果只记住一件事：Claude Code 的大部分设计都在回答“哪些事情不该交给模型临场判断”。上下文预算交给缓存和按需加载，必须发生的事交给 hooks 和脚本，安全边界交给操作系统和代理，模型负责剩下真正需要判断的部分。</p></blockquote></div><div class="row-media"></div></div>
+</section>
+  </main>
+  <footer class="foot">主要来源：Anthropic 工程博客（Code execution with MCP、Advanced tool use、Making Claude Code safer with sandboxing、How we built Claude Code auto mode、An update on recent Claude Code quality reports、Scaling Managed Agents、How we contain Claude across products、Effective context engineering、Building a C compiler with a team of parallel Claudes）与 code.claude.com/docs（how-claude-code-works、code-mode、prompt-caching、context-window、tools-reference、sub-agents、agent-teams、workflows、hooks、skills、memory、permission-modes、sandboxing、changelog）。未使用任何泄露源码。</footer>
+</div>
+<dialog class="panel panel-diagram zoom-dialog" aria-labelledby="zoom-title">
+  <div class="panel-head"><span class="panel-title" id="zoom-title"></span><button type="button" class="panel-btn" data-zoom-close>关闭</button></div>
+  <div class="panel-body"></div>
+</dialog>
+<div class="sr-only" role="status" data-status></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function () {
+  var root = document.documentElement;
+  // theme
+  var tg = document.querySelector('[data-theme-toggle]');
+  if (tg) tg.addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('tech-article-theme', next); } catch (e) {}
+  });
+
+  // heading ids + anchors
+  var used = {};
+  function slug(t) {
+    var s = t.trim().toLowerCase().replace(/[\s　]+/g, '-').replace(/[^\p{L}\p{N}\-_]/gu, '').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'section';
+    var b = s, i = 2; while (used[s]) s = b + '-' + i++; used[s] = 1; return s;
+  }
+  var heads = Array.prototype.slice.call(document.querySelectorAll('.content h2, .content h3'));
+  var labels = heads.map(function (h) { return h.textContent.trim(); });
+  heads.forEach(function (h, i) {
+    h.id = h.id || slug(labels[i]);
+    var a = document.createElement('a'); a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#'; a.setAttribute('aria-label', '链接到本节');
+    h.appendChild(a);
+  });
+
+  // reading time + section count
+  var content = document.querySelector('.content');
+  var text = content.innerText || '';
+  var cjk = (text.match(/[㐀-鿿]/g) || []).length;
+  var words = (text.replace(/[㐀-鿿]/g, ' ').match(/[A-Za-z0-9_]+/g) || []).length;
+  var rt = document.querySelector('[data-reading-time]');
+  var preset = null;
+  try { preset = JSON.parse(document.getElementById('article-meta').textContent).minutes; } catch (e) {}
+  if (rt) rt.textContent = '约 ' + (preset || Math.max(1, Math.round(cjk / 400 + words / 220))) + ' 分钟';
+  var sc = document.querySelector('[data-sections]');
+  if (sc) sc.textContent = document.querySelectorAll('.content .sec > h2').length + ' 个章节';
+
+  // tables scroll inside a frame
+  content.querySelectorAll('table').forEach(function (t) {
+    var w = document.createElement('div'); w.className = 'table-wrap';
+    t.parentNode.insertBefore(w, t); w.appendChild(t);
+  });
+
+  // panels: copy, expand, zoom
+  var status = document.querySelector('[data-status]'), dlg = document.querySelector('.zoom-dialog');
+  document.querySelectorAll('.panel').forEach(function (p) {
+    var body = p.querySelector('.panel-body'), more = p.querySelector('[data-expand]');
+    // a code panel that scrolls needs a keyboard stop, or its hidden lines are pointer-only
+    if (p.querySelector('pre') && (body.scrollWidth > body.clientWidth || body.scrollHeight > body.clientHeight)) {
+      body.tabIndex = 0; body.setAttribute('role', 'region');
+      body.setAttribute('aria-label', p.querySelector('.panel-title').textContent);
+    }
+    if (more && body.scrollHeight > body.clientHeight + 8) {
+      p.classList.add('is-collapsible');
+      more.hidden = false;
+      more.addEventListener('click', function () {
+        var on = p.classList.toggle('expanded');
+        more.textContent = on ? '收起' : '展开全部';
+        if (!on) p.scrollIntoView({ block: 'nearest' });
+      });
+    }
+    var copy = p.querySelector('[data-copy]');
+    if (copy) copy.addEventListener('click', function () {
+      var txt = p.querySelector('pre').innerText;
+      var report = function (ok) {
+        var msg = ok ? '已复制' : '复制失败，请手动选中复制';
+        copy.textContent = msg; status.textContent = msg;
+        setTimeout(function () { copy.textContent = '复制'; }, ok ? 1400 : 4000);
+      };
+      var legacy = function () {
+        var ta = document.createElement('textarea'), ok = false;
+        ta.value = txt; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        ta.remove(); copy.focus(); return ok;
+      };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(function () { report(true); }, function () { report(legacy()); });
+      else report(legacy());
+    });
+    var zoom = p.querySelector('[data-zoom]');
+    if (zoom) {
+      var open = function () {
+        dlg.className = 'panel panel-diagram zoom-dialog ' + (p.classList.contains('dark') ? 'dark' : 'light');
+        dlg.querySelector('.panel-title').textContent = p.querySelector('.panel-title').textContent;
+        dlg.querySelector('.panel-body').innerHTML = body.innerHTML;
+        dlg.showModal();
+      };
+      zoom.addEventListener('click', open);
+      body.addEventListener('click', open);
+    }
+  });
+  dlg.querySelector('[data-zoom-close]').addEventListener('click', function () { dlg.close(); });
+  dlg.querySelector('.panel-body').addEventListener('click', function () { dlg.close(); });
+
+  // syntax colours for plain code blocks
+  if (window.hljs) document.querySelectorAll('.panel-code code[class^="language-"]').forEach(function (el) {
+    try { window.hljs.highlightElement(el); } catch (e) {}
+  });
+
+  // section ticks with hover card
+  var list = document.querySelector('.ticks-list'), card = document.querySelector('.ticks-card');
+  var canHover = matchMedia('(hover: hover)').matches;
+  var secNo = 0, subNo = 0, nums = heads.map(function (h) {
+    if (h.tagName === 'H2') { subNo = 0; return ('0' + (++secNo)).slice(-2); }
+    return ('0' + secNo).slice(-2) + '.' + (++subNo);
+  });
+  function snippet(h) {
+    var scope = h.tagName === 'H2' ? h.parentElement : h.closest('.row-text');
+    var p = scope && scope.querySelector('p, li');
+    var t = p ? p.textContent.replace(/\s+/g, ' ').trim() : '';
+    return t.length > 120 ? t.slice(0, 120) + '…' : t;
+  }
+  var links = heads.map(function (h, i) {
+    var a = document.createElement('a');
+    a.href = '#' + h.id; a.className = h.tagName === 'H3' ? 'lv3' : 'lv2'; a.setAttribute('aria-label', labels[i]);
+    var show = function () {
+      card.querySelector('.num').textContent = nums[i];
+      card.querySelector('strong').textContent = labels[i];
+      card.querySelector('p').textContent = snippet(h);
+      card.style.top = (a.offsetTop + a.offsetHeight / 2) + 'px';
+      card.hidden = false;
+    };
+    a.addEventListener('mouseenter', function () { if (canHover) a.classList.add('is-hover'); show(); });
+    a.addEventListener('mouseleave', function () { a.classList.remove('is-hover'); });
+    a.addEventListener('focus', show);
+    a.addEventListener('blur', function () { card.hidden = true; });
+    list.appendChild(a); return a;
+  });
+  list.addEventListener('mouseleave', function () { card.hidden = true; });
+  var bar = document.querySelector('.progress');
+  function onScroll() {
+    var y = innerHeight * 0.25, act = 0;
+    heads.forEach(function (h, i) { if (h.getBoundingClientRect().top < y) act = i; });
+    links.forEach(function (a, i) { a.classList.toggle('is-active', i === act); });
+    var max = document.documentElement.scrollHeight - innerHeight;
+    bar.style.transform = 'scaleX(' + (max > 0 ? scrollY / max : 0) + ')';
+  }
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+})();
+</script>
+</body>
+</html>
