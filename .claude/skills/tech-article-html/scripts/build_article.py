@@ -748,7 +748,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("body")
     ap.add_argument("out")
-    ap.add_argument("--title", required=True, help="may contain <code>")
+    ap.add_argument("--title", default="", help="may contain <code>")
+    ap.add_argument("--fm-json", default="",
+                    help="read title/kicker/deck/meta/footer/index from a JSON file; keeps article text "
+                         "off the command line (some machines kill processes over argv contents)")
     ap.add_argument("--kicker", default="")
     ap.add_argument("--deck", default="", help="one-sentence summary under the title")
     ap.add_argument("--meta", action="append", default=[], help="chip under the title; repeatable")
@@ -757,6 +760,17 @@ def main():
     ap.add_argument("--plan", action="store_true", help="print the section/row plan")
     ap.add_argument("--index", default="", help="relative link to the article index, e.g. index.html")
     a = ap.parse_args()
+    if a.fm_json:
+        with open(a.fm_json, encoding="utf-8") as f:
+            fmj = json.load(f)
+        a.title = fmj.get("title") or a.title
+        a.kicker = fmj.get("kicker") or a.kicker
+        a.deck = fmj.get("deck") or a.deck
+        a.meta = fmj.get("meta") or a.meta
+        a.footer = fmj.get("footer") or a.footer
+        a.index = fmj.get("index") or a.index
+    if not a.title:
+        ap.error("--title is required (or give --fm-json with a title)")
 
     body = convert_panels(open(a.body, encoding="utf-8").read())
     lint_and_plan(body, a.plan)

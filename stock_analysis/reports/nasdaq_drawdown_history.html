@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>纳斯达克大跌与反弹</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --hover: rgba(11,11,11,0.04);
+  --s-v: #2a78d6;      /* 冲击型 V */
+  --s-u: #eb6834;      /* 磨底型 U/W */
+  --s-l: #1baf7a;      /* 泡沫破裂 L */
+  --s-now: #898781;    /* 进行中 */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --hover: rgba(255,255,255,0.05);
+    --s-v: #3987e5;
+    --s-u: #d95926;
+    --s-l: #199e70;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --hover: rgba(255,255,255,0.05);
+  --s-v: #3987e5;
+  --s-u: #d95926;
+  --s-l: #199e70;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+}
+main { max-width: 920px; margin: 0 auto; padding: 48px 16px 96px; }
+h1 { font-size: 30px; line-height: 1.3; margin: 0 0 8px; text-wrap: balance; }
+h2 { font-size: 22px; line-height: 1.4; margin: 56px 0 12px; }
+h3 { font-size: 17px; margin: 0 0 6px; }
+p { margin: 0 0 14px; }
+.meta { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+.lead { font-size: 17px; color: var(--ink-2); }
+.note { color: var(--ink-2); font-size: 14px; }
+strong { font-weight: 600; }
+a { color: inherit; text-underline-offset: 3px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+}
+
+/* 统计卡片 */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 24px 0 8px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.stat .k { font-size: 13px; color: var(--ink-2); }
+.stat .v { font-size: 26px; font-weight: 600; line-height: 1.3; margin-top: 2px; }
+.stat .d { font-size: 12px; color: var(--muted); }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 图例 */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); margin-bottom: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+
+/* 带条形的表格 */
+.tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+th { font-weight: 600; color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr:hover { background: var(--hover); }
+tr.now td { font-weight: 600; }
+.period { white-space: nowrap; }
+.period small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; white-space: normal; line-height: 1.4; }
+.barcell { width: 34%; min-width: 140px; }
+.bar { height: 12px; border-radius: 0 4px 4px 0; }
+.bar.now { background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--surface) 3px 5px); }
+.tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--ink-2); }
+@media (max-width: 640px) {
+  th, td { padding: 8px 6px; }
+  .barcell { min-width: 44px; width: auto; }
+  .card { padding: 14px 12px; }
+  .period { white-space: normal; min-width: 96px; }
+  .hide-sm { display: none; }
+}
+
+/* 散点图 */
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { font-family: inherit; }
+.tip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 8px 10px; font-size: 13px; line-height: 1.5; min-width: 170px;
+  transition: opacity .12s;
+}
+.tip .t { font-weight: 600; margin-bottom: 2px; }
+.tip .r { display: flex; justify-content: space-between; gap: 16px; color: var(--ink-2); }
+.tip .r b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 三种形态 */
+.types { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.type { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; font-size: 14px; }
+.type h3 { display: flex; align-items: center; gap: 8px; }
+.type dl { margin: 10px 0 0; }
+.type dt { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.type dd { margin: 0; }
+@media (max-width: 760px) { .types { grid-template-columns: 1fr; } }
+
+ul.check { padding-left: 20px; margin: 0 0 14px; }
+ul.check li { margin-bottom: 8px; }
+.sources { font-size: 13px; color: var(--ink-2); }
+.sources li { margin-bottom: 4px; word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>纳斯达克历次大跌，以及之后怎么反弹</h1>
+<div class="meta">数据截至 2026 年 11 月 20 日收盘 · 纳斯达克综合指数（价格指数，日收盘）</div>
+
+<p class="lead">先说结论：这次纳指综合指数从 10 月 6 日的高点跌了 <strong>约 18%</strong>，还没到 30%，也还没到 20% 的熊市线。历史上跌到这个位置的情况有两种：一种在 20% 附近止跌，几个月就收复高点；另一种继续往下，变成持续一两年甚至十几年的熊市。光看跌幅分不出是哪一种，主要看下跌的<strong>原因</strong>和<strong>美联储会不会转向宽松</strong>。</p>
+
+<h2>一、这次跌了多少</h2>
+
+<div class="stats">
+  <div class="stat"><div class="k">距 10/6 高点</div><div class="v">−18.1%</div><div class="d">27,599.79 → 22,617.73</div></div>
+  <div class="stat"><div class="k">11/20 单日</div><div class="v">−5.28%</div><div class="d">今年涨幅全部回吐</div></div>
+  <div class="stat"><div class="k">当周</div><div class="v">约 −10%</div><div class="d">标普 −8.6%，道指 −8%</div></div>
+  <div class="stat"><div class="k">VIX 收盘</div><div class="v">35.89</div><div class="d">盘中一度超过 40</div></div>
+</div>
+
+<p>时间线：10 月 6 日创新高；11 月 5 日纳指单日跌 5.52%，进入回调区间（跌幅超过 10%），纳指 100 当天跌 6.36%，是 2020 年 3 月以来最大单日跌幅；11 月 20 日再跌 5.28%。这是纳指今年<strong>第三次</strong>进入回调，前两次在 3 月和 7 月。</p>
+<p>报道提到的原因：市场开始怀疑 AI 投资能不能赚回来，美联储官员讲话偏鹰派，AI 公司的融资变得更谨慎，市场流动性也偏弱。高盛预计对冲基金等机构本周可能还要卖出最多 806 亿美元的股票。</p>
+<p class="note">标题里说的“跌 30%”，如果指个股或板块就说得通：费城半导体指数在 11 月 10 日已经比高点低 24% 左右，部分 AI 个股跌得更多。但综合指数整体跌了大约 18%。</p>
+
+<h2>二、历次大跌一览</h2>
+<p>下表列出 1970 年代以来纳指综合指数跌幅接近或超过 20% 的回撤。2011 年和 2015–16 年这两次跌到约 18% 就止住了，和现在的位置最接近，所以也列了进来。</p>
+
+<div class="card">
+  <div class="legend" aria-hidden="true">
+    <span><i class="sw" style="background:var(--s-v)"></i>冲击型 V</span>
+    <span><i class="sw" style="background:var(--s-u)"></i>磨底型 U / W</span>
+    <span><i class="sw" style="background:var(--s-l)"></i>泡沫破裂型 L</span>
+    <span><i class="sw" style="background:var(--s-now)"></i>进行中</span>
+  </div>
+  <div class="tbl-wrap">
+  <table id="tbl">
+    <thead><tr>
+      <th>时期</th><th>跌幅</th><th class="num"></th>
+      <th class="num hide-sm">高点→谷底</th><th class="num">谷底→收复</th><th class="hide-sm">形态</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <p class="note" style="margin:12px 0 0">日期精确到月，用时为约数。“谷底→收复高点”指收盘价重新站上前一个高点所用的时间。2022 年取 12 月 28 日的收盘低点，比 10 月低点略低。</p>
+</div>
+
+<h2>三、跌得越深，修复越慢</h2>
+<p>横轴是跌幅，纵轴是从谷底到收复前高用了几个月（对数刻度，每一格是上一格的 10 倍）。把鼠标放在点上可以看具体数字。竖线是这次目前的位置。</p>
+
+<div class="card">
+  <div class="legend" aria-hidden="true">
+    <span><i class="sw" style="background:var(--s-v)"></i>冲击型 V</span>
+    <span><i class="sw" style="background:var(--s-u)"></i>磨底型 U / W</span>
+    <span><i class="sw" style="background:var(--s-l)"></i>泡沫破裂型 L</span>
+  </div>
+  <div class="chart" id="scatter">
+    <div class="tip" id="tip" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<p>图上大致分成三组。跌幅在 35% 以内的，大多一年内收复，最快的只要两三个月。跌幅超过 50% 的三次（1973–74、2000–02、2007–09），收复都要两年以上，2000 年那次用了 12 年半。1987 年和 2022 年夹在中间，跌 35% 左右，用一到两年修复。</p>
+
+<h2>四、三种反弹形态</h2>
+
+<div class="types">
+  <div class="type">
+    <h3><i class="sw" style="background:var(--s-v)"></i>冲击型 V</h3>
+    <p style="margin:0">跌得急、反弹也急，2 到 6 个月收复前高。</p>
+    <dl>
+      <dt>例子</dt><dd>1990、1998、2018、2020、2025</dd>
+      <dt>起因</dt><dd>来自外部的冲击：海湾战争、LTCM 危机、加息加贸易战、疫情、关税</dd>
+      <dt>怎么止跌的</dt><dd>政策很快转向：美联储降息或放水（1998、2020），鲍威尔 2019 年初暂停加息，2025 年暂缓加征关税</dd>
+      <dt>共同点</dt><dd>企业盈利没有真正塌下来，跌的主要是情绪和估值</dd>
+    </dl>
+  </div>
+  <div class="type">
+    <h3><i class="sw" style="background:var(--s-u)"></i>磨底型 U / W</h3>
+    <p style="margin:0">见底以后会再探一次底，横着磨上几个月到一年多。</p>
+    <dl>
+      <dt>例子</dt><dd>1987、2011、2015–16、2022</dd>
+      <dt>起因</dt><dd>加息周期（2022）、欧债危机（2011）、中国和油价引发的增长担忧（2015–16）、程序化交易引发的崩盘（1987）</dd>
+      <dt>怎么止跌的</dt><dd>通胀见顶或政策预期改善，市场慢慢消化估值</dd>
+      <dt>共同点</dt><dd>两次低点很常见：2015 年 8 月和 2016 年 2 月各一次，2022 年 10 月和 12 月各一次</dd>
+    </dl>
+  </div>
+  <div class="type">
+    <h3><i class="sw" style="background:var(--s-l)"></i>泡沫破裂型 L</h3>
+    <p style="margin:0">跌 50% 以上，见底要一年半到两年半，收复前高要好几年。</p>
+    <dl>
+      <dt>例子</dt><dd>1973–74、2000–02、2007–09</dd>
+      <dt>起因</dt><dd>估值泡沫加上盈利塌缩（2000），或者滞胀（1973）、金融体系危机（2008）</dd>
+      <dt>怎么止跌的</dt><dd>估值跌回历史低位，盈利重新开始增长，往往还要经历一次衰退</dd>
+      <dt>共同点</dt><dd>下跌途中会有好几次 20% 以上的反弹，见下一节</dd>
+    </dl>
+  </div>
+</div>
+
+<h2>五、反弹 20% 不一定是见底</h2>
+<p>大熊市里经常出现很猛的反弹，幅度足以让人以为熊市结束了。下面几次反弹之后，指数都创了新低：</p>
+
+<div class="card">
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>熊市</th><th>反弹区间</th><th class="num">反弹幅度</th><th>之后</th></tr></thead>
+    <tbody>
+      <tr><td>2000–02</td><td>2000.05 → 2000.07</td><td class="num">约 +36%</td><td>又跌了约 60%</td></tr>
+      <tr><td>2000–02</td><td>2001.04 → 2001.05</td><td class="num">约 +41%</td><td>9·11 之后创新低</td></tr>
+      <tr><td>2000–02</td><td>2001.09 → 2002.01</td><td class="num">约 +45%</td><td>2002 年 10 月才真正见底</td></tr>
+      <tr><td>2007–09</td><td>2008.11 → 2009.01</td><td class="num">约 +26%</td><td>2009 年 3 月创新低</td></tr>
+      <tr><td>2021–22</td><td>2022.06 → 2022.08</td><td class="num">约 +23%</td><td>10 月和 12 月再创新低</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+<p>真正见底时一般还有几件事同时发生：美联储已经在降息或明确停止加息，盈利预期的下调接近尾声，信用利差开始收窄，大部分股票跟着一起涨，而不是只有几只大盘股在涨。</p>
+
+<h2>六、这次更像哪一种</h2>
+<p>现在下结论还早。这次的情况两边都沾一点：</p>
+<ul class="check">
+  <li><strong>像 V 型的地方：</strong>跌得很快，一个半月跌了 18%，主要是情绪和资金在推动（基金经理说这是他见过最受情绪驱动的一次抛售）。目前没有看到盈利大幅下调或者经济衰退。今年 3 月和 7 月两次回调都很快收复了。</li>
+  <li><strong>像 L 型的地方：</strong>下跌的核心是怀疑 AI 投资能不能回本。这和 2000 年质疑互联网公司能不能赚钱很像，都是在质疑长期估值的依据。如果 AI 公司开始削减资本开支，芯片和云厂商的盈利预期会被连锁下调。</li>
+  <li><strong>跟 2018、2022 相似的地方：</strong>美联储偏鹰派。2018 年是鲍威尔转向以后才见底的，2022 年是一路加息、一路下跌。</li>
+</ul>
+
+<h3 style="margin-top:24px">接下来值得看的几件事</h3>
+<ul class="check">
+  <li><strong>美联储的态度。</strong>历史上的 V 型反弹几乎都伴随政策转向。12 月议息会议的表态比任何技术指标都重要。</li>
+  <li><strong>AI 大厂的资本开支指引。</strong>如果微软、谷歌、Meta、亚马逊维持甚至上调开支，“AI 回本”的担忧会缓和；如果开始下调，就要往 L 型的方向去想。</li>
+  <li><strong>盈利预期有没有下调。</strong>只是估值下跌，一般是 V 或 U 型；盈利预期也跟着下调，才是深熊。</li>
+  <li><strong>信用市场。</strong>AI 相关的债券和私募信贷利差有没有明显走阔。2008 年和 2000 年都是信用先出问题。</li>
+  <li><strong>反弹的质量。</strong>第一次 15–20% 的反弹，如果只是少数大盘股在涨、成交量萎缩，参考上一节，不要急着当成见底。</li>
+</ul>
+
+<p class="note">本文只是整理历史数据，不构成投资建议。历史数据可以告诉你可能出现哪几种走势，但不能告诉你这次一定是哪一种。</p>
+
+<h2>数据说明与来源</h2>
+<p class="note">历史高点、谷底的点位来自纳斯达克综合指数的日收盘价，收复日期精确到月，部分是约数，用总回报口径会有出入（dqydj 的含股息月均值口径下，2000 年那次在 2014 年 6 月收复）。2026 年的数据来自 11 月 20–22 日的新闻报道，各家数字略有不同，以官方收盘数据为准。</p>
+<ul class="sources">
+  <li><a href="https://www.cnn.com/2026/11/05/investing/tech-heavy-nasdaq-plunges">CNN：Stock markets plunge as massive tech sell-off wipes $2.5 trillion</a></li>
+  <li><a href="https://finance.yahoo.com/markets/stocks/articles/nasdaq-approaches-concerning-milestone-ahead-012605637.html">Yahoo Finance：The Nasdaq is tracking for its worst November since 2008</a></li>
+  <li><a href="https://www.cnbc.com/2026/11/19/stock-market-today-live-updates.html">CNBC：S&amp;P 500 and Dow close in correction; Nasdaq erases 2026 gain</a></li>
+  <li><a href="https://beinsure.com/news/nasdaq-stock-market-today-ai-selloff-erases-2026-gains/">Beinsure：Nasdaq 2026 gains erased as Wall Street warns of further losses</a></li>
+  <li><a href="https://en.sedaily.com/world/2026/11/22/nasdaq-erases-2026-gains-as-funds-brace-for-806-billion">Seoul Economic Daily：Funds brace for $80.6 billion selloff</a></li>
+  <li><a href="https://cryptobriefing.com/nasdaq-third-correction-2026-ai-selloff/">Crypto Briefing：Nasdaq slides into its third correction of 2026</a></li>
+  <li><a href="https://dqydj.com/nasdaq-drawdown-history/">DQYDJ：NASDAQ Drawdown History</a></li>
+  <li><a href="https://investing.com/news/stock-market-news/factbox-past-nasdaq-bear-markets-lasted-long-and-cut-deep-1729243">Reuters / Investing.com：Past Nasdaq bear markets lasted long and cut deep</a></li>
+</ul>
+
+</main>
+
+<script>
+// 历次回撤数据：跌幅为日收盘价，用时单位为月（约数）
+const TYPES = {
+  v:   { name: '冲击型 V',      color: 'var(--s-v)' },
+  u:   { name: '磨底型 U / W',  color: 'var(--s-u)' },
+  l:   { name: '泡沫破裂型 L',  color: 'var(--s-l)' },
+  now: { name: '进行中',        color: 'var(--s-now)' },
+};
+const EPISODES = [
+  { label: '1973–74', peak: '1973.01', trough: '1974.10', recover: '约 1979',    depth: 59.9, down: 21, up: 57,  type: 'l', cause: '滞胀、石油危机' },
+  { label: '1987',    peak: '1987.08', trough: '1987.10', recover: '1989 年夏', depth: 35.9, down: 2,  up: 21,  type: 'u', cause: '黑色星期一' },
+  { label: '1989–90', peak: '1989.10', trough: '1990.10', recover: '1991.04',   depth: 33.0, down: 12, up: 6,   type: 'v', cause: '海湾战争、衰退' },
+  { label: '1998',    peak: '1998.07', trough: '1998.10', recover: '1998.12',   depth: 29.5, down: 3,  up: 2,   type: 'v', cause: '俄债违约、LTCM' },
+  { label: '2000–02', peak: '2000.03', trough: '2002.10', recover: '2015.04',   depth: 77.9, down: 31, up: 150, type: 'l', cause: '互联网泡沫破裂' },
+  { label: '2007–09', peak: '2007.10', trough: '2009.03', recover: '2011.04',   depth: 55.6, down: 16, up: 25,  type: 'l', cause: '次贷与金融危机' },
+  { label: '2011',    peak: '2011.04', trough: '2011.10', recover: '2012.02',   depth: 18.7, down: 5,  up: 4,   type: 'u', cause: '欧债危机、美债降级' },
+  { label: '2015–16', peak: '2015.07', trough: '2016.02', recover: '2016.08',   depth: 18.2, down: 7,  up: 6,   type: 'u', cause: '人民币贬值、油价暴跌' },
+  { label: '2018',    peak: '2018.08', trough: '2018.12', recover: '2019.04',   depth: 23.6, down: 4,  up: 4,   type: 'v', cause: '加息、贸易战' },
+  { label: '2020',    peak: '2020.02', trough: '2020.03', recover: '2020.06',   depth: 30.1, down: 1,  up: 2.5, type: 'v', cause: '新冠疫情' },
+  { label: '2021–22', peak: '2021.11', trough: '2022.12', recover: '2024.02',   depth: 36.4, down: 13, up: 14,  type: 'u', cause: '激进加息' },
+  { label: '2025',    peak: '2024.12', trough: '2025.04', recover: '2025.06',   depth: 24.3, down: 4,  up: 2.7, type: 'v', cause: '关税冲击' },
+  { label: '2026',    peak: '2026.10', trough: '—',       recover: '—',         depth: 18.1, down: 1.5, up: null, type: 'now', cause: 'AI 投资回报疑虑（进行中）' },
+];
+
+const fmtM = m => m == null ? '—' : (m >= 24 ? `约 ${(m / 12).toFixed(m >= 120 ? 1 : 0).replace('.0', '')} 年` : `约 ${m} 个月`);
+
+// 表格
+(function renderTable() {
+  const tbody = document.querySelector('#tbl tbody');
+  const max = 80;
+  tbody.innerHTML = EPISODES.map(e => {
+    const t = TYPES[e.type];
+    return `<tr class="${e.type === 'now' ? 'now' : ''}">
+      <td class="period"><span class="tag" style="color:inherit"><i class="sw" style="background:${t.color}"></i>${e.label}</span><small>${e.cause}</small></td>
+      <td class="barcell"><div class="bar ${e.type === 'now' ? 'now' : ''}" style="width:${e.depth / max * 100}%;background-color:${t.color}"></div></td>
+      <td class="num">−${e.depth.toFixed(1)}%</td>
+      <td class="num hide-sm">${fmtM(e.down)}</td>
+      <td class="num">${e.type === 'now' ? '未知' : fmtM(e.up)}</td>
+      <td class="hide-sm"><span class="tag"><i class="sw" style="background:${t.color}"></i>${t.name}</span></td>
+    </tr>`;
+  }).join('');
+})();
+
+// 散点图：跌幅 vs 谷底到收复的月数（对数）
+function renderScatter() {
+  const root = document.getElementById('scatter');
+  const tip = document.getElementById('tip');
+  root.querySelector('svg')?.remove();
+  const W = Math.max(320, root.clientWidth), narrow = W < 600;
+  const H = narrow ? 340 : 420, m = { t: 22, r: 16, b: 48, l: narrow ? 64 : 72 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const x = v => m.l + v / 80 * iw;
+  const yMax = Math.log10(200);
+  const y = v => m.t + ih - Math.log10(v) / yMax * ih;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(n);
+    return n;
+  };
+  const text = (str, attrs, parent) => { const t = el('text', { 'font-size': 12, fill: 'var(--muted)', ...attrs }, parent); t.textContent = str; return t; };
+
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', '历次回撤跌幅与收复用时散点图，数据同上表');
+  root.prepend(svg);
+
+  // 网格与刻度
+  [1, 3, 10, 30, 100].forEach(v => {
+    el('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: 'var(--grid)', 'stroke-width': 1 });
+    text(`${v} 月`, { x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' });
+  });
+  (narrow ? [0, 40, 80] : [0, 20, 40, 60, 80]).forEach(v =>
+    text(v === 0 ? '0' : `−${v}%`, { x: x(v), y: H - m.b + 20, 'text-anchor': v === 80 ? 'end' : 'middle' }));
+  el('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, stroke: 'var(--axis)', 'stroke-width': 1 });
+  text('从高点到谷底的跌幅', { x: m.l + iw / 2, y: H - 6, 'text-anchor': 'middle', fill: 'var(--ink-2)' });
+  text('谷底→收复前高', { x: 14, y: m.t + ih / 2, 'text-anchor': 'middle', fill: 'var(--ink-2)', transform: `rotate(-90 14 ${m.t + ih / 2})` });
+
+  // 当前位置
+  const now = EPISODES.find(e => e.type === 'now');
+  el('line', { x1: x(now.depth), x2: x(now.depth), y1: m.t, y2: m.t + ih, stroke: 'var(--ink-2)', 'stroke-width': 1 });
+  text(`这次：−${now.depth}%`, { x: x(now.depth) + 6, y: m.t - 6, fill: 'var(--ink)', 'font-weight': 600 });
+
+  // 标签偏移，避免重叠；窄屏只标注右上方分散的点，其余靠悬停查看
+  const OFF = {
+    '2000–02': [-10, 4, 'end'], '1973–74': [10, 4, 'start'], '2007–09': [10, 4, 'start'],
+    '1987': [10, 4, 'start'], '2021–22': [10, 4, 'start'], '1989–90': [10, 4, 'start'],
+    '2015–16': [-10, 0, 'end'], '2011': [-10, 10, 'end'], '2018': [6, -9, 'start'],
+    '2025': [-8, 16, 'end'], '1998': [-10, 4, 'end'], '2020': [10, 4, 'start'],
+  };
+  const SPARSE = ['2000–02', '1973–74', '2007–09', '1987', '2021–22'];
+  EPISODES.filter(e => e.up != null).forEach(e => {
+    const cx = x(e.depth), cy = y(e.up), c = TYPES[e.type].color;
+    const g = el('g', { tabindex: 0, style: 'cursor:default;outline:none' });
+    el('circle', { cx, cy, r: 16, fill: 'transparent' }, g);
+    const dot = el('circle', { cx, cy, r: 6, fill: c, stroke: 'var(--surface)', 'stroke-width': 2 }, g);
+    if (!narrow || SPARSE.includes(e.label)) {
+      const [dx, dy, anchor] = OFF[e.label];
+      text(e.label, { x: cx + dx, y: cy + dy, 'text-anchor': anchor, fill: 'var(--ink-2)' }, g);
+    }
+
+    const show = () => {
+      dot.setAttribute('r', 8);
+      tip.innerHTML = `<div class="t">${e.label} · ${TYPES[e.type].name}</div>
+        <div class="r">原因<b>${e.cause}</b></div>
+        <div class="r">跌幅<b>−${e.depth.toFixed(1)}%</b></div>
+        <div class="r">高点→谷底<b>${fmtM(e.down)}</b></div>
+        <div class="r">谷底→收复<b>${fmtM(e.up)}</b></div>`;
+      tip.style.opacity = 1;
+      let left = cx + 14;
+      if (left + tip.offsetWidth > W) left = cx - tip.offsetWidth - 14;
+      tip.style.left = Math.max(0, left) + 'px';
+      tip.style.top = Math.max(0, cy - 20) + 'px';
+    };
+    const hide = () => { dot.setAttribute('r', 6); tip.style.opacity = 0; };
+    g.addEventListener('pointerenter', show);
+    g.addEventListener('pointerleave', hide);
+    g.addEventListener('focus', show);
+    g.addEventListener('blur', hide);
+  });
+}
+renderScatter();
+let lastW = 0;
+new ResizeObserver(([en]) => {
+  const w = Math.round(en.contentRect.width);
+  if (w !== lastW) { lastW = w; renderScatter(); }
+}).observe(document.getElementById('scatter'));
+</script>
+</body>
+</html>

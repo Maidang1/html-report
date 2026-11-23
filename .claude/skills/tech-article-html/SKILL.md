@@ -13,6 +13,40 @@ description: 把技术内容生成为单文件 HTML 长文：全宽页面，左�
 - 每个 `<h2>` 是一节，节标题上方自动编号（01、02…）。节内按“行”排版：**说明文字在左，它解释的代码 / Prompt / 图在右**；文字较长时右栏吸附跟随。窄于 1320px（右栏放不下 600px 宽的图）时上下排列。
 - 源码放深色面板（文件路径栏 + 复制按钮，自动语法高亮）；Prompt、Markdown、注入给模型的消息放浅色纸面面板（自动换行）；长内容默认折叠、可展开；图可点击放大。
 
+## 用 Markdown 当源文件
+
+正文可以不写 HTML 片段，改写一个 Markdown 源文件，由脚本生成同样的页面（页头字段也在这个文件里，不再走命令行参数）：
+
+```bash
+node <skill-dir>/scripts/md_to_article.mjs article.md            # 生成 article.html
+node <skill-dir>/scripts/md_to_article.mjs article.md out.html --plan
+node <skill-dir>/scripts/html_to_md.mjs 旧文章.html [article.md]  # 把 build_article.py 生成的旧页面反向转成 MD 源
+```
+
+- 两个转换器是 Node 脚本（标准库即可运行）；页头字段经临时 JSON 文件（`--fm-json`）传给 `build_article.py`，文章文本不出现在任何子进程的命令行里。
+
+- front matter（`---` 包住）提供页头字段：`title`（反引号会变成 `<h1>` 里的 `<code>`）/ `kicker` / `deck` / `meta`（`- ` 列表）/ `footer` / `index`（返回目录页的相对链接）/ `updated`（固定 article-meta 的更新日期，缺省用当天）。这些字段和正文一样按 Markdown 行内语法写（`` `code` ``、`**粗体**`、`[链接](url)`），`<`、`&` 直接写，脚本负责转义。
+- 正文子集：段落（一段一行，不折行）、`-` 列表、`1.` 有序列表、`>` 引用、`##` / `###` 标题、GFM 管道表格（单元格里的 `|` 写成 `\|`，行内代码里也一样）；代码 / Prompt 面板和图都写围栏代码块，语言后跟 `title="…"`（文件路径或出处），可加 `wide` / `full` 标记：
+
+  ````
+  ```swift title="src/retry.ts"
+  …代码…          ← swift / ts / py / bash 等走深色代码面板
+  ```
+
+  ```prompt title="prompts/retry-policy.md"
+  …Prompt 原文…    ← prompt / md / text 走浅色纸面面板
+  ```
+
+  ```svg title="图 N：…" tone="light"
+  <svg …>…</svg>   ← 图；深色图配 tone="dark"，超宽图加 wide
+  ```
+  ````
+- 第一个 `##` 之前的列表会成为开头的要点卡（`data-points`）。
+- 几个转写约定：围栏 `title` 保持页面里的 HTML 转义形式（标题含 `"` 时写 `&quot;`）；要把非 prose 语言（如 rust）放进浅色纸面面板，加 `kind="prompt"`；单元格 / 段落里需要换行直接写 `<br>`；内容本身含反引号的行内代码用 `` `` … `` `` 双反引号、前后各留一个空格。
+- 左右配对规则与 HTML 片段完全一致：先写说明，再放它解释的面板；面板之后的列表 / 引用留在同一行左栏。`--plan` 的行划分和 WARN / ERROR 检查照常生效。
+- 两个脚本互为逆运算：`html_to_md.mjs` 转出的 MD 再用 `md_to_article.mjs` 生成，应得到**字节相同**的页面；迁移旧稿后先 `cmp` 验证再覆盖原文件（旧模板生成的页面只有模板里的 CSS / JS 不同，正文与页头应仍逐字节一致）。
+- 限制：手工着色源码（代码块内带 `<span>`）在 MD 里用 `raw` 围栏逐字节搬运——内容是已转义的 HTML，手改这类围栏要按 body 片段的转义规则写；`html_to_md.mjs` 会自动打上 `raw` 标记。
+
 ## 设计取向（用户明确要求过，不要改）
 
 - 不用楷体、手写体等装饰字体；不加彩色手写批注（荧光笔、圈注、带箭头的标签、花括号、页边旁注、彩色便签）。强调靠 `<strong>`、行内 `<code>` 和左右对照本身。
@@ -32,7 +66,7 @@ description: 把技术内容生成为单文件 HTML 长文：全宽页面，左�
 
 ### 2. 写正文片段
 
-写一个只含正文的 HTML 文件（不需要 `<html>`、`<head>`、目录、页头）。用到的写法：
+写一个只含正文的 HTML 文件（不需要 `<html>`、`<head>`、目录、页头）；也可以直接用 Markdown 写（见上文「用 Markdown 当源文件」），`md_to_article.mjs` 会把它转成同样的片段再走同一流程。用到的写法：
 
 ```html
 <p>导语……</p>

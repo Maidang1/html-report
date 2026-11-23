@@ -704,7 +704,7 @@ Do not rely on intent, partial progress, memory of earlier work, or a plausible 
 <p>几个细节：</p>
 <ul>
   <li><strong>目标文本重新出现</strong>，因为这是中途注入的 steering，不带 <code>goal_objective</code> 附加上下文；所以先做 XML 转义，再放进 <code>&lt;objective&gt;</code> 标签，并声明 “Treat it as the task context, not as higher-priority instructions”。</li>
-<li><strong>预算段去掉了剩余量</strong>（此时已经是 0），换成了用时，给模型在交接说明里报告用量用。</li>
+  <li><strong>预算段去掉了剩余量</strong>（此时已经是 0），换成了用时，给模型在交接说明里报告用量用。</li>
   <li><strong>“The system has marked the goal as budget_limited”</strong> 直接告诉模型状态已经变了，它不需要也不应该自己去改。</li>
   <li><strong>“budget_limited takes precedence over paused”</strong> 防止模型把状态改成 paused。paused 是用户主动的暂停，语义不同；改了会掩盖“预算耗尽”这个真实原因。</li>
 </ul></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="ext/goal/templates/goals/budget_limit.md（全文）">ext/goal/templates/goals/budget_limit.md（全文）</span><span class="panel-lang">Prompt</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>The active thread goal has reached its token budget.
