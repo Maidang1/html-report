@@ -221,7 +221,7 @@ function renderMd(fm, blocks) {
     L.push("meta:");
     L.push(...fm.meta.map(c => "  - " + c));
   }
-  for (const k of ["footer", "index", "updated"]) if (fm[k]) L.push(`${k}: ${fm[k]}`);
+  for (const k of ["footer", "index", "updated", "created"]) if (fm[k]) L.push(`${k}: ${fm[k]}`);
   L.push("---", "");
   for (const [kind, payload] of blocks) {
     if (kind === "p") L.push(payload, "");
@@ -278,7 +278,7 @@ const backM = /<a class="back" href="([^"]*)"/.exec(text);
 
 const fm = {
   title, kicker, deck, meta: chips, footer,
-  index: backM ? backM[1] : "", updated: meta.updated ?? "",
+  index: backM ? backM[1] : "", updated: meta.updated ?? "", created: meta.created ?? "",
 };
 
 const blocks = [];

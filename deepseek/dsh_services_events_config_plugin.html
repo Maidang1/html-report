@@ -1,0 +1,1766 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh 的服务、事件、配置与插件实战：从 Cordis 源码到一个能卸载干净的插件</title>
+<meta name="description" content="对应学习计划的 03 服务、04 事件、05/06 配置·组合·HMR、07 接进 harness。本文读 dsh 仓库里 vendored Cordis 和 harness 包的源码，用实际运行的实验逐条核对教程里的说法：服务的归属是怎么算出来的、五种事件分发模式出错时各自怎样、配置什么时候校验、改哪些字段才不重启、…">
+<script type="application/json" id="article-meta">{"title": "dsh 的服务、事件、配置与插件实战：从 Cordis 源码到一个能卸载干净的插件", "title_html": "dsh 的服务、事件、配置与插件实战：从 Cordis 源码到一个能卸载干净的插件", "kicker": "机制拆解", "deck": "对应学习计划的 03 服务、04 事件、05/06 配置·组合·HMR、07 接进 harness。本文读 dsh 仓库里 vendored Cordis 和 harness 包的源码，用实际运行的实验逐条核对教程里的说法：服务的归属是怎么算出来的、五种事件分发模式出错时各自怎样、配置什么时候校验、改哪些字段才不重启、HMR 替换的边界在哪；再指出教程 07 在这个 commit 上跑不通的原因，最后写一个在真实 harness 包上跑通的插件，把服务、事件和卸载清理串起来。", "meta": ["deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）", "@deepseek-ai/cordis 4.2.0-alpha.1 · dsh-* 0.2.3-alpha.2", "实验均在 Node 24 上实际运行"], "sections": ["服务是一条 Impl 记录：同一作用域只有一个实现，后来者不接班", "调用方追踪：ctx.tools.register() 为什么知道是谁调的", "五种分发模式里，只有 parallel 让所有监听器跑完", "waterfall：不调 next() 是否决，调了不 return 是 bug", "配置在激活时才校验，volatile 要五个条件同时成立", "cordis.yml 按 id 协调，patch 整块替换 config", "教程 07 在 4b399c3 上跑不通：缺一行组合，还有一个没写进 inject 的顺序依赖", "自写插件 acme-ledger：服务、事件和卸载顺序放在一起", "坑点清单：28 条，按出现顺序"], "chars": 18874, "minutes": 50, "updated": "2026-11-24", "created": "2026-11-24 01:00"}</script>
+<script>(function(){var d=document.documentElement,c=null;try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')d.setAttribute('data-theme',t);c=localStorage.getItem('tech-article-toc')}catch(e){}var n=matchMedia('(max-width: 1100px)').matches;d.setAttribute('data-toc',!n&&c!=='closed'?'open':'closed')})();</script>
+<style>
+:root {
+  --bg: #f5f4ed; --surface: #faf9f5; --sunken: #f0eee6;
+  --ink: #141413; --ink-2: #2c2c29; --muted: #504e49; --faint: #6b6a64; --tick: #85837b;
+  --line: #e8e6dc; --line-strong: #d8d5c8;
+  --accent: #1B365D; --accent-soft: #EEF2F7;
+  --code-bg: #181816; --code-head: #22221f; --code-ink: #ece8da; --code-line: #30302e;
+  --prompt-bg: #faf9f5; --prompt-ink: #141413; --diagram-bg: #f5f4ed;
+  --pr-h: #1B365D; --pr-b: #141413;
+  --hl: #E4ECF5; --hl-amber: #f0e0d8;
+  --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 8px 24px rgb(20 20 19 / 0.05);
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Noto Sans CJK SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+    --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e; --tick: #6e6c64;
+    --line: #2e2d2a; --line-strong: #403f3c;
+    --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+    --code-bg: #10100f; --code-head: #191917; --code-line: #2a2926;
+    --prompt-bg: #1a1917; --prompt-ink: #dedad0; --diagram-bg: #f5f4ed;
+    --pr-h: #9bb8dc; --pr-b: #f2f0ea;
+    --hl: rgb(155 184 220 / 0.15); --hl-amber: rgb(217 180 138 / 0.16);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+  --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e; --tick: #6e6c64;
+  --line: #2e2d2a; --line-strong: #403f3c;
+  --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+  --code-bg: #10100f; --code-head: #191917; --code-line: #2a2926;
+  --prompt-bg: #1a1917; --prompt-ink: #dedad0; --diagram-bg: #f5f4ed;
+  --pr-h: #9bb8dc; --pr-b: #f2f0ea;
+  --hl: rgb(155 184 220 / 0.15); --hl-amber: rgb(217 180 138 / 0.16);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 1rem/1.75 var(--sans); -webkit-font-smoothing: antialiased;
+  text-autospace: ideograph-alpha ideograph-numeric;
+}
+a { color: var(--accent); text-decoration: none; }
+@media (hover: hover) { a:hover { text-decoration: underline; text-underline-offset: 3px; } }
+strong { font-weight: 650; color: var(--ink); }
+:not(pre) > code {
+  padding: 0.08em 0.3em; border-radius: 4px;
+  background: color-mix(in srgb, var(--sunken) 70%, transparent); color: var(--ink);
+  font: 0.86em/1 var(--mono); letter-spacing: 0;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+
+.skip {
+  position: absolute; left: 16px; top: -48px; z-index: 90; padding: 8px 14px; border-radius: 8px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font-size: 0.875rem;
+}
+.skip:focus { top: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* progress + sidebar table of contents */
+.progress { position: fixed; inset: 0 0 auto 0; height: 2px; z-index: 60; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
+.toc-toggle {
+  position: fixed; left: 16px; top: 16px; z-index: 56;
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .toc-toggle:hover { color: var(--ink); border-color: var(--line-strong); } }
+.toc-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toc {
+  position: fixed; left: 0; top: 0; bottom: 0; z-index: 55; width: 272px;
+  padding: 60px 12px 32px 16px; overflow-y: auto; overscroll-behavior: contain;
+  border-right: 1px solid var(--line); background: var(--bg);
+}
+:root[data-toc="closed"] .toc { display: none; }
+.toc-head { margin: 0 0 6px 12px; font: 600 0.6875rem/1 var(--mono); letter-spacing: .14em; color: var(--faint); }
+.toc-title { margin: 0 0 18px 12px; padding-bottom: 16px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 0.875rem; font-weight: 600; line-height: 1.5; }
+.toc-list { margin: 0; padding: 0; list-style: none; }
+.toc-list a {
+  display: flex; gap: 10px; padding: 5px 10px; border-left: 2px solid var(--line); border-radius: 0;
+  color: var(--muted); font-size: 0.84375rem; line-height: 1.5; transition: color .15s ease, border-color .15s ease;
+}
+.toc-list a .num { flex: none; min-width: 1.6em; font-family: var(--mono); font-size: 0.6875rem; font-weight: 500; line-height: 20px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.toc-list a.lv2 { padding-top: 8px; padding-bottom: 8px; color: var(--ink-2); font-weight: 500; }
+.toc-list a.lv3 { padding: 3px 10px 3px 38px; font-size: 0.78125rem; }
+.toc-list a.lv3 .num { display: none; }
+/* subsections show only under the section being read */
+.toc-list li.sub:not(.in-sec) { display: none; }
+@media (hover: hover) { .toc-list a:hover { color: var(--ink); text-decoration: none; } }
+.toc-list a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.toc-list a.lv2.is-sec { color: var(--ink); font-weight: 600; }
+.toc-list a.is-sec .num { color: var(--accent); }
+.toc-list a.is-active { border-left-color: var(--accent); color: var(--ink); }
+.toc-list a.lv3.is-active { font-weight: 500; }
+
+/* page */
+.page { max-width: 1760px; margin: 0 auto; padding: 0 56px 120px 96px; }
+@media (min-width: 1101px) {
+  :root:not([data-toc="closed"]) .page { padding-left: 328px; }
+}
+/* with the sidebar open the content column is 232px narrower, so stack earlier */
+@media (min-width: 1101px) and (max-width: 1552px) {
+  :root:not([data-toc="closed"]) .row { display: block; }
+  :root:not([data-toc="closed"]) .row-text { max-width: 720px; }
+  :root:not([data-toc="closed"]) .row-media { position: static; margin-top: 18px; }
+}
+.masthead { padding: 56px 0 40px; border-bottom: 1px solid var(--line); }
+.masthead-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.back { font-size: 0.8125rem; color: var(--muted); }
+@media (hover: hover) { .back:hover { color: var(--accent); text-decoration: none; } }
+.masthead-left { display: flex; align-items: center; gap: 14px; }
+.kicker { margin: 0; font: 600 0.75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); } }
+h1 {
+  max-width: 1040px; margin: 18px 0 14px;
+  font-size: clamp(1.75rem, 3.2vw, 2.75rem); line-height: 1.18; font-weight: 700; letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h1 code { padding: 0; background: none; font: inherit; font-family: var(--mono); font-size: 0.92em; color: var(--accent); }
+.deck { max-width: 820px; margin: 0; color: var(--ink-2); font-size: 1.125rem; line-height: 1.65; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.meta span {
+  padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font: 0.78125rem/1.6 var(--sans); font-variant-numeric: tabular-nums;
+}
+
+/* sections */
+.content { counter-reset: sec; }
+.sec { padding-top: 88px; }
+.sec + .sec { margin-top: 32px; border-top: 1px solid var(--line); }
+.sec > h2 {
+  counter-increment: sec; position: relative;
+  max-width: 1040px; margin: 0 0 36px;
+  font-size: clamp(1.5rem, 2.2vw, 2rem); line-height: 1.3; font-weight: 700; letter-spacing: -0.01em;
+  text-wrap: balance; scroll-margin-top: 28px;
+}
+.sec > h2::before {
+  content: counter(sec, decimal-leading-zero) var(--sec-of, ""); display: block; margin-bottom: 14px;
+  font: 600 0.8125rem/1 var(--mono); letter-spacing: .08em; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+h2 code, h3 code { padding: 0; background: none; color: var(--accent); font-size: 0.86em; font-weight: 600; }
+h3 { margin: 0 0 12px; font-size: 1.1875rem; line-height: 1.45; font-weight: 650; scroll-margin-top: 28px; }
+.anchor { margin-left: 8px; color: var(--muted); font-weight: 400; opacity: 0; }
+@media (hover: hover) { h2:hover .anchor, h3:hover .anchor { opacity: 1; text-decoration: none; } }
+.anchor:focus-visible { opacity: 1; text-decoration: none; }
+
+.intro { padding-top: 40px; }
+.intro > p { max-width: 720px; margin: 0 0 20px; color: var(--ink-2); }
+.points { display: grid; max-width: 1040px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; margin: 8px 0 0; padding: 0; list-style: none; }
+.points li { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink-2); font-size: 0.90625rem; line-height: 1.65; }
+.points li > code.fn-name { display: inline-block; margin-bottom: 8px; padding: 0; background: none; color: var(--accent); font-size: 0.8125rem; font-weight: 600; }
+.points li > span { display: block; }
+@media (min-width: 700px) {
+  .points { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .points:has(> li:nth-child(3):last-child, > li:nth-child(6):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* text | media rows */
+.row {
+  display: grid; grid-template-columns: minmax(340px, min(40%, 600px)) minmax(0, 1fr);
+  gap: 0 clamp(32px, 3.5vw, 56px); align-items: start; margin: 0 0 40px;
+}
+.row + .row:has(> .row-text > h3:first-child) { margin-top: 64px; }
+.row-text > :first-child { margin-top: 0; }
+.row-text > :last-child { margin-bottom: 0; }
+.row-text p, .row-text ul, .row-text ol { margin: 0 0 16px; color: var(--ink-2); }
+.row-text ul, .row-text ol { padding-left: 1.3em; }
+.row-text li { margin: 6px 0; }
+.row-text li::marker { color: var(--muted); }
+.row-text blockquote {
+  margin: 0 0 16px; padding: 12px 16px; border-left: 2px solid var(--accent);
+  border-radius: 0 8px 8px 0; background: var(--accent-soft); color: var(--ink-2); font-size: 0.9375rem;
+}
+.row-text blockquote p { margin: 0; }
+.row-media { position: sticky; top: 24px; display: grid; gap: 20px; min-width: 0; }
+.row-only-text { grid-template-columns: minmax(0, 720px); }
+.row-only-text > .row-media { display: none; }
+.row-wide { display: block; margin: 0 0 48px; }
+
+/* panels */
+.panel { margin: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); position: relative; }
+.panel-head {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--line); font: 0.75rem/1.4 var(--mono); color: var(--muted);
+}
+.panel-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.panel-lang { flex: none; color: var(--muted); }
+.panel-btn {
+  flex: none; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: inherit; font: 0.75rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .panel-btn:hover { border-color: var(--line); color: var(--ink); } }
+.panel-body { max-height: 560px; overflow: auto; }
+.panel-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panel.is-collapsible:not(.expanded) .panel-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent 100%);
+}
+.panel.expanded .panel-body { max-height: none; }
+.panel pre { margin: 0; padding: 16px 18px; font: 0.78125rem/1.7 var(--mono); letter-spacing: 0; tab-size: 4; }
+.panel pre code { font: inherit; }
+.panel-expand {
+  display: block; width: 100%; height: 34px; border: 0; border-top: 1px solid var(--line);
+  background: var(--surface); color: var(--accent); font: 0.78125rem var(--sans); cursor: pointer;
+}
+.panel-expand[hidden] { display: none; }
+
+.panel-code { background: var(--code-bg); border-color: var(--code-line); }
+.panel-code .panel-head { background: var(--code-head); border-color: var(--code-line); color: #a8a49a; }
+.panel-code .panel-lang { color: #a8a49a; }
+@media (hover: hover) { .panel-code .panel-btn:hover { border-color: #403f3c; color: #ece8da; } }
+.panel-code .panel-body:focus-visible { outline-color: #9bb8dc; }
+.panel-code .panel-expand { background: var(--code-head); border-color: var(--code-line); color: #9bb8dc; }
+.panel-code pre { color: var(--code-ink); white-space: pre; }
+.panel-code .kw { color: #ff7b72; }
+.panel-code .fn { color: #d2a8ff; }
+.panel-code .str { color: #a5d6ff; }
+.panel-code :is(.cm, .cmt) { color: #a8a49a; }
+.panel-code .num { color: #79c0ff; }
+.panel-code :is(.ty, .typ) { color: #ffa657; }
+.panel-code :is(.hl-line, .hl-amber) { display: inline-block; min-width: 100%; margin: 0 -18px; padding: 0 18px; box-sizing: content-box; }
+.panel-code .hl-line { background: rgb(56 139 253 / 0.16); box-shadow: inset 2px 0 0 #58a6ff; }
+.panel-code .hl-amber { background: rgb(210 153 34 / 0.18); box-shadow: inset 2px 0 0 #d29922; }
+
+/* highlight.js tokens for plain code (hand-tokenised code keeps its own spans) */
+.panel-code .hljs-keyword, .panel-code .hljs-selector-tag, .panel-code .hljs-doctag { color: #ff7b72; }
+.panel-code .hljs-title, .panel-code .hljs-title.function_, .panel-code .hljs-section { color: #d2a8ff; }
+.panel-code .hljs-string, .panel-code .hljs-regexp, .panel-code .hljs-template-variable { color: #a5d6ff; }
+.panel-code .hljs-comment, .panel-code .hljs-quote, .panel-code .hljs-meta { color: #a8a49a; }
+.panel-code .hljs-number, .panel-code .hljs-literal, .panel-code .hljs-attr, .panel-code .hljs-variable, .panel-code .hljs-property, .panel-code .hljs-symbol { color: #79c0ff; }
+.panel-code .hljs-type, .panel-code .hljs-built_in, .panel-code .hljs-title.class_, .panel-code .hljs-params { color: #ffa657; }
+.panel-code .hljs-addition { color: #aff5b4; background: rgb(46 160 67 / 0.15); }
+.panel-code .hljs-deletion { color: #ffdcd7; background: rgb(248 81 73 / 0.15); }
+
+.panel-prompt { background: var(--prompt-bg); }
+.panel-prompt .panel-head { background: var(--sunken); }
+.panel-prompt pre { color: var(--prompt-ink); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78125rem; line-height: 1.75; }
+.panel-prompt .pr-h { color: var(--pr-h); font-weight: 700; }
+.panel-prompt .pr-b { color: var(--pr-b); font-weight: 650; }
+.panel-prompt :is(.cm, .cmt) { color: var(--muted); }
+.panel-prompt .kw, .panel-prompt .fn, .panel-prompt .num, .panel-prompt :is(.ty, .typ) { color: inherit; }
+.panel-prompt .str { color: inherit; }
+.panel-prompt :is(.hl-line, .hl-amber) { display: inline; padding: 1px 0; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.panel-prompt .hl-line { background: var(--hl); }
+.panel-prompt .hl-amber { background: var(--hl-amber); }
+
+.panel-diagram:not(.zoom-dialog) { border: 0; border-radius: 0; background: none; box-shadow: none; }
+.panel-diagram:not(.zoom-dialog) .panel-head { min-height: 0; padding: 0 0 10px; border: 0; background: none; color: var(--muted); }
+.panel-diagram .panel-body { max-height: none; padding: 16px; border-radius: 10px; cursor: zoom-in; }
+.panel-diagram:not(.zoom-dialog).dark .panel-body { background: #0c1220; }
+.panel-diagram.light .panel-body {
+  background:
+    linear-gradient(to right, var(--diagram-bg) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--diagram-bg) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.14), transparent) left / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.14), transparent) right / 14px 100% no-repeat scroll,
+    var(--diagram-bg);
+}
+
+.zoom-dialog.panel-diagram.dark { background: #0c1220; border-color: #1e293b; }
+.zoom-dialog.panel-diagram.dark .panel-head { background: #0f172a; border-color: #1e293b; color: #94a3b8; }
+.panel-diagram svg { display: block; width: 100%; height: auto; min-width: 600px; letter-spacing: 0; }
+.panel-diagram.light svg { font-family: var(--sans); }
+.panel-diagram.wide svg { min-width: 920px; }
+.zoom-dialog { width: calc(100% - 48px); max-width: none; height: calc(100% - 48px); max-height: none; padding: 0; color: var(--ink); }
+.zoom-dialog[open] { display: flex; flex-direction: column; }
+.zoom-dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+.zoom-dialog .panel-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; cursor: zoom-out; }
+.zoom-dialog :is(svg, img) { display: block; width: 100%; height: 100%; min-width: 0; max-width: none !important; object-fit: contain; }
+
+/* table */
+.row-wide .table-wrap {
+  overflow-x: auto; border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink);
+  /* edge shadows appear only while more columns sit past the scroll edge */
+  background:
+    linear-gradient(to right, var(--bg) 30%, transparent) left / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--bg) 30%, transparent) right / 40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--ink) 30%, transparent), transparent) left / 16px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--ink) 30%, transparent), transparent) right / 16px 100% no-repeat scroll,
+    var(--bg);
+}
+table { width: 100%; min-width: 880px; border-collapse: collapse; font-size: 0.875rem; line-height: 1.65; font-variant-numeric: tabular-nums; }
+th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; color: var(--ink-2); }
+th { position: sticky; top: 0; background: var(--bg); border-bottom-color: var(--ink-2); color: var(--ink); font-weight: 650; font-size: 0.8125rem; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); color: var(--ink); white-space: nowrap; box-shadow: 1px 0 0 var(--line); }
+th:first-child { position: sticky; left: 0; z-index: 2; box-shadow: 1px 0 0 var(--line); }
+:is(td, th, .points li) code { padding: 0; background: none; color: var(--ink); font-weight: 500; }
+td code, th code { white-space: normal; }
+
+.foot { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
+
+/* stack once the media column would drop below ~634px: a 600px-min diagram plus its padding */
+@media (max-width: 1320px) {
+  .row { display: block; }
+  .row-text { max-width: 720px; }
+  .row-media { position: static; margin-top: 18px; }
+}
+@media (max-width: 1100px) {
+  .toc { box-shadow: var(--shadow); }
+  .page { padding: 0 28px 96px 72px; }
+}
+@media (max-width: 640px) {
+  .toc { width: min(320px, 86vw); }
+  table { min-width: 680px; }
+  td:first-child, th:first-child { position: static; box-shadow: none; }
+  td:first-child { white-space: normal; }
+  .page { padding: 0 16px 72px; }
+  .masthead { padding-top: 60px; }
+  .deck { font-size: 1rem; }
+  .panel-diagram svg { min-width: 560px; }
+}
+@media print {
+  .toc, .toc-toggle, .progress, .theme-toggle, .panel-btn, .panel-expand { display: none !important; }
+  .page, :root:not([data-toc="closed"]) .page { padding: 0; }
+  .row { display: block; }
+  .row-media { position: static; }
+  .panel-body { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">跳到正文</a>
+<div class="progress" aria-hidden="true"></div>
+<button type="button" class="toc-toggle" aria-controls="toc" aria-expanded="true">收起目录</button>
+<nav class="toc" id="toc" aria-label="目录">
+  <p class="toc-head">目录</p>
+  <p class="toc-title" data-toc-title></p>
+  <ol class="toc-list"></ol>
+</nav>
+<div class="page">
+  <header class="masthead">
+    <div class="masthead-top">
+      <div class="masthead-left"><a class="back" href="index.html">← 全部文章</a><p class="kicker">机制拆解</p></div>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换明暗主题">◐ 主题</button>
+    </div>
+    <h1>dsh 的服务、事件、配置与插件实战：从 Cordis 源码到一个能卸载干净的插件</h1>
+    <p class="deck">对应学习计划的 03 服务、04 事件、05/06 配置·组合·HMR、07 接进 harness。本文读 dsh 仓库里 vendored Cordis 和 harness 包的源码，用实际运行的实验逐条核对教程里的说法：服务的归属是怎么算出来的、五种事件分发模式出错时各自怎样、配置什么时候校验、改哪些字段才不重启、HMR 替换的边界在哪；再指出教程 07 在这个 commit 上跑不通的原因，最后写一个在真实 harness 包上跑通的插件，把服务、事件和卸载清理串起来。</p>
+    <div class="meta"><span>deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）</span><span>@deepseek-ai/cordis 4.2.0-alpha.1 · dsh-* 0.2.3-alpha.2</span><span>实验均在 Node 24 上实际运行</span><span data-reading-time></span><span data-sections></span></div>
+  </header>
+  <main class="content" id="content">
+<section class="intro"><p>前两篇讲了<a href="dsh_plugin_guide.html">怎么给 dsh 写插件</a>和<a href="dsh_lifecycle_and_effects.html">插件活多久、卸载时留下什么</a>。这一篇补上剩下的四块：服务、事件、配置与组合、接进 harness。它们对应 Cordis 教程的 03 到 07 章，也是学习计划里 D16 到 D19 的内容。</p>
+<p>写法和上一篇一样：每个说法都落到源码行号，能跑的都跑一遍。教程大部分是对的，但有三处与 commit <code>4b399c3</code> 不符，其中一处会让教程 07 的示例直接跑不起来，文中会逐一指出。Fiber 状态机、<code>ctx.effect</code>、逆序卸载和“提供方先释放资源”的竞态已在上一篇讲过，这里只引用结论。</p>
+<ul class="points"><li><strong>服务就是一条记录</strong>：根 store 里以隔离 symbol 为键的 <code>Impl</code>。同一作用域只能有一个实现，第二个提供方直接 FAILED，旧的卸载后它也不会接班</li><li><strong>注册归属调用方</strong>：通过 <code>ctx.x</code> 拿到的服务是一个 Proxy，方法里的 <code>this.ctx</code> 是调用方的 context，所以 <code>ctx.tools.register()</code> 随调用方卸载自动撤销</li><li><strong>五种分发模式</strong>：只有 <code>parallel</code> 在有监听器出错时仍让其余监听器跑完；<code>emit</code> 一个同步 throw 就中断，dsh 的通知类事件因此全部改用逐个 try/catch</li><li><strong>配置激活时才校验</strong>：按 id 覆盖的 patch 整块替换 <code>config</code>，volatile 字段要五个条件同时成立才免重启；HMR 默认只热重载配置</li><li><strong>教程 07 跑不通</strong>：缺 <code>dsh-session-projection</code> 时整条链静默 PENDING、exit 0；补齐后还缺一个没写进 <code>inject</code> 的 executor 顺序依赖</li></ul></section>
+<section class="sec"><h2>服务是一条 Impl 记录：同一作用域只有一个实现，后来者不接班</h2>
+<div class="row"><div class="row-text"><p>Cordis 里“服务”没有什么特别的数据结构。<code>ctx.provide(name, value)</code> 往根 <code>ReflectService.store</code> 里写一条 <code>Impl</code>，键是当前作用域给这个名字分配的隔离 symbol。<code>Service</code> 基类的构造函数也只是装上调用方追踪（下一节讲），再调 <code>ctx.reflect.provide</code>。所以<strong>继承 <code>Service</code> 不是必需的</strong>：Loader 自己就是手动装 tracker 再 provide 的。</p>
+<p>看 <code>provide()</code> 的顺序：它本身是一个 <code>fiber.effect</code>，先以 <code>++this._implCounter</code> 建好 <code>Impl</code>，<strong>再</strong>检查这个键是否已被占用，占用就抛 <code>service "x" has been registered at &lt;…&gt;</code>。写入后记录同时进入提供方 Fiber 的 <code>provisions</code>。提供方还不是 ACTIVE 时不通知；等它进入 ACTIVE 再统一 notify，所以 Service 子类虽然在构造函数里就注册了，消费方要等 <code>[Service.init]</code> 完成才会启动。</p>
+<p>撤销函数分三步：从 store 删掉并通知同隔离域；<code>await</code> 直到 <code>impl.dependents</code> 清空；最后才从 <code>provisions</code> 移走。第三步排在最后，消费方才能在自己的 teardown 里继续读到服务。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/reflect.ts:313-349">vendor/cordis/src/reflect.ts:313-349</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  provide(name: string, value?: any, check?: () =&gt; boolean) {
+    return this.ctx.fiber.effect(() =&gt; {
+      if (!this.props[name]) {
+        this.props[name] ??= { type: 'service' }
+      } else if (this.props[name].type !== 'service') {
+        throw new Error(`property "${name}" is already declared as ${this.props[name].type}`)
+      }
+      this.props[name] = { type: 'service' }
+
+      this.ctx[symbols.root][symbols.isolate][name] ??= Symbol(name)
+      const key = this.ctx[symbols.isolate][name]
+      const impl: Impl = { uid: ++this._implCounter, name, value, ctx: this.ctx, check, isolate: key, dependents: new Set() }
+      if (this.store[key]) {
+        throw new Error(`service "${name}" has been registered at &lt;${this.store[key].ctx.fiber.name}&gt;`)
+      }
+      this.store[key] = impl
+      this.ctx.fiber.provisions.add(impl)
+      if (this.ctx.fiber.state === FiberState.ACTIVE) {
+        this.notify([name])
+      }
+      return async () =&gt; {
+        if (this.store[impl.isolate] === impl) delete this.store[impl.isolate]
+        this.ctx.isolate(name, impl.isolate).reflect.notify([name])
+        // Retired bindings cannot gain new dependents. Wait only for their
+        // cleanup, even if a fiber has left the registry or starts a new load.
+        // Yield even without direct dependents so child cleanup can still
+        // access the inherited service before its provision is removed.
+        await new Promise&lt;void&gt;((resolve) =&gt; {
+          impl.release = resolve
+          if (!impl.dependents.size) resolve()
+        })
+        impl.release = undefined
+        // ensure self access before dependencies cleanup
+        this.ctx.fiber.provisions.delete(impl)
+      }
+    }, `ctx.provide(${JSON.stringify(name)})`)
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>换提供方会让消费方重跑，重复提供会直接失败</h3>
+<p>消费方的 epoch 由修订号和各个 inject 服务的 <code>uid</code> 拼成（上一篇讲过 epoch 驱动重载）。换一个提供方，uid 就变，消费方先卸载、再在新实现上重跑。实验 1 先挂提供方 A，再在 A 还活着时挂 B，然后卸 A、挂 C：</p>
+<ul>
+  <li>B 加载即 FAILED（状态 3），<strong>A 卸载后 B 也不会顶上</strong>：FAILED 只有 <code>update()</code> 能清掉，依赖变化不会让它重试</li>
+  <li>失败的 B 也消耗了一个 uid，所以 C 拿到的是 3</li>
+  <li>有 runtime 的插件里，<strong>没在 <code>inject</code> 里声明就读 <code>ctx.greeter</code> 会抛错</strong>，即使服务已经存在；<code>ctx.get()</code> 不受这个限制</li>
+</ul>
+<p>教程说“卸载 <code>dsh-bash-local</code>、挂载另一个 <code>shell</code> 提供方，所有注入者都会重启”。这句话成立的前提是<strong>先卸旧、再装新</strong>。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 1 输出：替换提供方、重复注册、未 inject 直接读">实验 1 输出：替换提供方、重复注册、未 inject 直接读</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>consumer state before provider: 0
+consumer apply: [A] hello world | impl uid = 1 | epoch = 0:1
+--- duplicate provider B while A active
+B state: 3 B error: service "greeter" has been registered at &lt;Greeter&gt;
+--- dispose A
+consumer effect disposed
+consumer state after A gone: 0
+--- B has failed; load C
+consumer apply: [C] hello world | impl uid = 3 | epoch = 0:3
+--- access without inject
+ctx.greeter threw: cannot get property "greeter" without inject
+ctx.get("greeter"): [C] hello via get
+FiberState map: undefined</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>就绪判定：inject 是持续订阅，check 是拉模式</h3>
+<p>就绪判定在消费方的 <code>_checkImpl</code>：只认提供方处于 ACTIVE 的 impl；如果 impl 带 <code>check</code>，就以消费方的 ctx 调它，<code>check</code> 返回假或抛错都按“不可用”处理。<code>_refresh</code> 把所有 inject 项的 uid 拼成 epoch，缺一项就是 INACTIVE，也就是 PENDING。</p>
+<p>提供方增删、状态切换都会触发 <code>reflect.notify(names)</code>，它遍历所有 Fiber 重新检查。问题在 <code>check</code>：<strong>它只在 notify 时被重新求值</strong>。服务内部状态变了而不手动 <code>ctx.reflect.notify([name])</code>，消费方会一直停在 PENDING。实验 2 里把 <code>ready</code> 置真后消费方仍是 0，调完 notify 才变成 2。packages 下没有一个包自己实现 check，唯一的真实用户是 Loader。</p>
+<p>普通插件作者真正需要的扩展点是 <code>[Service.init]</code>：它会被等待，packages 里有 41 处。<code>SystemPrompt</code> 在 init 里 <code>await</code> 注册 session projection，<code>WorkspaceRegistry</code> 在 init 里打开存储并用 <code>this.ctx.effect</code> 挂上关闭函数。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/fiber.ts:625-656">vendor/cordis/src/fiber.ts:625-656</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  _checkImpl(name: string) {
+    const impl = this.ctx.reflect._getImpl(name, true)
+    if (!impl) return delete this._store[name]
+    try {
+      if (impl.check &amp;&amp; !impl.check.call(getTraceable(this.ctx, impl.value))) {
+        return delete this._store[name]
+      }
+    } catch (error) {
+      impl.ctx.logger.error(error)
+      return delete this._store[name]
+    }
+    this._store[name] = impl
+  }
+
+  _refresh() {
+    let epoch = `${this._revision}`
+    for (const name of Object.keys(this.inject)) {
+      const impl = this._store[name]
+      if (!impl) {
+        epoch = INACTIVE
+        break
+      }
+      epoch += ':' + impl.uid
+    }
+    this._setEpoch(epoch)
+  }
+
+  private _setEpoch(epoch: string) {
+    const oldEpoch = this._runner.epoch
+    if (epoch === oldEpoch) return
+    // a failed fiber only recovers through update(), which clears _error
+    if (this._error) return</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 2 输出：init 被等待；check 只在 notify 时重查；提供方等消费方卸载完">实验 2 输出：init 被等待；check 只在 notify 时重查；提供方等消费方卸载完</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>   4 Db init start
+  59 Db init done
+  84 provider state 2 | consumer state 0 | ctx.get(db) = object
+  95 after ready=true WITHOUT notify: consumer state 0
+ 106 after reflect.notify: consumer state 2
+ 106 consumer teardown start, still can use db: rows
+ 142 consumer teardown end
+ 142 provider own effect disposed</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>调用方追踪：<code>ctx.tools.register()</code> 为什么知道是谁调的</h2>
+<div class="row"><div class="row-text"><p>上一篇说过，<code>ctx.tools.register()</code> 本身就是 effect，调用方卸载时注册自动撤销。可 <code>ToolsService</code> 只有一个实例，属于它自己的 Fiber，它怎么知道这次是哪个插件在调？</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 1：同一个 ToolsService，两个调用方各自拿到“自己的 this.ctx”，注册落在调用方 Fiber 上</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="调用方追踪">
+<defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#504e49"/></marker></defs>
+<rect x="14" y="40" width="170" height="64" rx="8" fill="#EEF2F7" stroke="#1B365D" stroke-width="1.2"/>
+<text x="99" y="64" text-anchor="middle" font-size="12" font-weight="600" fill="#141413">plugin-one 的 Fiber</text>
+<text x="99" y="84" text-anchor="middle" font-size="11" fill="#504e49">ctx.tools.register(hello)</text>
+<rect x="14" y="170" width="170" height="64" rx="8" fill="#EEF2F7" stroke="#1B365D" stroke-width="1.2"/>
+<text x="99" y="194" text-anchor="middle" font-size="12" font-weight="600" fill="#141413">plugin-two 的 Fiber</text>
+<text x="99" y="214" text-anchor="middle" font-size="11" fill="#504e49">ctx.tools.register(bye)</text>
+<rect x="250" y="96" width="180" height="84" rx="8" fill="#fff" stroke="#504e49" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="340" y="120" text-anchor="middle" font-size="12" font-weight="600" fill="#141413">getTraceable Proxy</text>
+<text x="340" y="140" text-anchor="middle" font-size="11" fill="#504e49">读 tracker.property（'ctx'）</text>
+<text x="340" y="156" text-anchor="middle" font-size="11" fill="#504e49">→ 返回使用方 ctx；方法调用</text>
+<text x="340" y="172" text-anchor="middle" font-size="11" fill="#504e49">时 this 换成 shadow</text>
+<rect x="496" y="96" width="170" height="84" rx="8" fill="#1B365D" stroke="#1B365D" stroke-width="1.2"/>
+<text x="581" y="120" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">ToolsService 实例</text>
+<text x="581" y="140" text-anchor="middle" font-size="11" fill="#dfe7f1">只有一个，属于</text>
+<text x="581" y="156" text-anchor="middle" font-size="11" fill="#dfe7f1">ToolsService 自己的 Fiber</text>
+<line x1="185" y1="72" x2="248" y2="118" stroke="#504e49" stroke-width="1.4" marker-end="url(#a1)"/>
+<line x1="185" y1="202" x2="248" y2="160" stroke="#504e49" stroke-width="1.4" marker-end="url(#a1)"/>
+<line x1="431" y1="138" x2="494" y2="138" stroke="#504e49" stroke-width="1.4" marker-end="url(#a1)"/>
+<path d="M 581 95 C 581 18, 120 10, 110 38" fill="none" stroke="#1B365D" stroke-width="1.4" marker-end="url(#a1)"/>
+<text x="380" y="64" text-anchor="middle" font-size="11" font-weight="600" fill="#141413">this.layers.effect(this.ctx, …)：effect 登记在 plugin-one 上</text>
+<path d="M 581 181 C 581 270, 120 280, 110 236" fill="none" stroke="#1B365D" stroke-width="1.4" marker-end="url(#a1)"/>
+<text x="380" y="222" text-anchor="middle" font-size="11" font-weight="600" fill="#141413">同一行代码，effect 登记在 plugin-two 上</text>
+<text x="360" y="290" text-anchor="middle" font-size="11" fill="#504e49">p1.dispose() → 只撤 hello，bye 不受影响；registry 没写任何“按插件清理”的代码</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><p>答案在 <code>getTraceable</code>。通过 ctx 代理读到的服务不是原始实例，而是一个 Proxy。在 Proxy 上读 tracker 声明的属性（<code>'ctx'</code>）时，返回的是<strong>使用方</strong>的 context；调用方法时，<code>this</code> 被换成一个 <code>ctx</code> 已被覆盖的 shadow。源码注释把分工写得很清楚：def site 决定服务解析，<strong>use site 决定 intercept、isolate 和 effects</strong>。</p>
+<p>于是 <code>ToolsService.register()</code> 最后那行 <code>this.layers.effect(this.ctx, …)</code> 里的 <code>this.ctx</code> 是调用方的 ctx。<code>ScopedLayers.effect</code> 按 <code>scopeOf(ctx)</code> 选层，再调 <code>ctx.effect(...)</code>：这条注册既<strong>归属调用方 Fiber</strong>，又<strong>落在调用方的 agent 作用域层</strong>。工具重名的报错文案提示“register through that agent's <code>agent.ctx</code>”，依据的就是这套追踪。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/utils.ts:153-180">vendor/cordis/src/utils.ts:153-180</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">function createShadow(useSite: Context, target: any, property: string | undefined, receiver: any) {
+  if (!property) return receiver
+  const value = getPropertyDescriptor(target, property)?.value
+  if (!value) return receiver
+  const defSite = (value[symbols.shadow] as Context | undefined) ?? value
+  return withProp(receiver, property, useSite.extend({ [symbols.shadow]: defSite }))
+}
+
+function createShadowMethod(ctx: Context, value: any, outer: any, shadow: {}) {
+  return new Proxy(value, {
+    apply: (target, thisArg, args) =&gt; {
+      if (thisArg === outer) thisArg = shadow
+      return getTraceable(ctx, Reflect.apply(target, thisArg, args))
+    },
+  })
+}
+
+// `ctx` may be a shadow, i.e. a pair of:
+// - def site: where the accessing code was defined, governs service resolution
+// - use site: where the service is consumed, governs intercept, isolate and effects
+function createTraceable(ctx: Context, value: any, tracker: Tracker) {
+  const defSite = (ctx[symbols.shadow] as Context | undefined) ?? ctx
+  const useSite = ctx[symbols.shadow] ? Object.getPrototypeOf(ctx) as Context : ctx
+  const proxy = new Proxy(value, {
+    get: (target, prop, receiver) =&gt; {
+      if (prop === symbols.original) return target
+      if (prop === symbols.caller) return defSite
+      if (prop === tracker.property) return useSite</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/core/tools/src/index.ts:145-152">packages/core/tools/src/index.ts:145-152</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">    if (name === RUN_CODE_NAME) {
+      throw new Error(`tool name "${RUN_CODE_NAME}" is reserved for the PTC mode presentation transport and cannot be registered or shadowed`)
+    }
+    return this.layers.effect(
+      this.ctx,
+      layer =&gt; layer.tools.insert(name, { definition, when: options.when }),
+      { label: 'tools.register()' },
+    )</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>两种写法会让追踪失效</h3>
+<p>实验 3 写了一个最小的 registry 服务，两个插件各注册一条，<code>p1.dispose()</code> 之后只剩 <code>bye</code>，而 registry 没写任何“按插件清理”的代码。实验 4 演示了两种破坏追踪的写法：</p>
+<ul>
+  <li><strong>在构造函数里存下 ctx，方法里用它注册</strong>：存下的是提供方自己的 ctx，条目归属提供方，调用方卸载后还在（<code>after caller disposed, bad.entries = [ 'x' ]</code>）</li>
+  <li><strong>把方法解构出来调用</strong>：<code>const { run } = ctx.shell; run()</code> 直接 <code>TypeError</code>。<code>createShadowMethod</code> 只在 <code>thisArg === receiver</code> 时替换 <code>this</code>，解构后 <code>this</code> 是 <code>undefined</code></li>
+</ul>
+<p>规则很简单：服务方法里始终用 <code>this.ctx</code>，调用方始终写 <code>ctx.svc.method()</code>。自己写服务时，不继承 <code>Service</code> 也能获得追踪，只要在构造函数里加一行 <code>Object.defineProperty(this, Service.tracker, { value: { property: 'ctx' } })</code>，dsh 的 <code>ConversationDefinitionRegistry</code> 和后文的示例插件都这样写。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>隔离开第二个槽，可选依赖用 get 加 inject</h3>
+<p>需要两个同名实现并存时用 <code>ctx.isolate(name, label?)</code>：它只是在子 ctx 的隔离表里给 <code>name</code> 换一个新 symbol，这棵子树的 provide、读取和 notify 都落到另一个槽。<strong>隔离后的子树不会回退到父作用域的实现</strong>，没有提供方时静默 PENDING。cordis.yml 里 <code>isolate: { shell: true }</code> 是条目私有，<code>isolate: { shell: 'label' }</code> 是同 label 共享。</p>
+<p>可选依赖有两种写法。<code>ctx.get(name)</code> 是即时探测，只返回 ACTIVE 提供方的值，不订阅变化，返回值不能长期持有。<code>ctx.inject(deps, cb)</code> 等价于 <code>ctx.plugin({ inject, apply: cb })</code>，只让这一部分随依赖加载和卸载。dsh 的标准组合是“<code>ctx.get</code> 定初值，<code>ctx.inject</code> 订阅变化”，<code>tool-bash</code> 是范例：没有 <code>jobs</code> 时先注册前台版 bash，<code>jobs</code> 出现时换成后台版，<code>jobs</code> 消失时在清理函数里换回前台版。</p>
+<blockquote><p>依赖会连锁：<code>ToolsService.inject = ['systemPrompt']</code>，所以 systemPrompt 重建时 tools 和所有工具插件依次重跑。这也是“注册写在 <code>apply</code> 里、不写在模块顶层”的根本原因。</p></blockquote></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/shell/tool-bash/src/index.ts:588-602">packages/shell/tool-bash/src/index.ts:588-602</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  if (!backgroundEnabled) {
+    ctx.tools.register(bashTool(undefined))
+    return
+  }
+  let foregroundOnly = ctx.get('jobs') === undefined ? ctx.tools.register(bashTool(undefined)) : undefined
+  ctx.inject(['jobs'], (jobCtx) =&gt; {
+    foregroundOnly?.()
+    foregroundOnly = undefined
+    const unregister = ctx.tools.register(bashTool(jobCtx.jobs))
+    jobCtx.effect(() =&gt; () =&gt; {
+      unregister()
+      if (ctx.fiber.state === FiberState.ACTIVE) foregroundOnly = ctx.tools.register(bashTool(undefined))
+    })
+  })
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>五种分发模式里，只有 parallel 让所有监听器跑完</h2>
+<div class="row row-only-text"><div class="row-text"><p>Cordis 4.2.0-alpha.1 恰好有五种分发模式：<code>emit | parallel | serial | bail | waterfall</code>。<a href="dsh_plugin_guide.html">插件指南</a>原先写成“四种”，漏了 <code>parallel</code>，已经更正。教程的表格只讲了语义，没讲<strong>有监听器出错时会怎样</strong>，而这恰恰决定了你该选哪一种。实验 04 在每种模式下让中间一个监听器 throw 或 reject：</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>模式</th><th>是否等待</th><th>返回值</th><th>中间监听器同步 throw</th><th>中间监听器 async reject</th></tr></thead>
+  <tbody>
+    <tr><td><code>emit</code></td><td>同步循环，不 await</td><td>永远 <code>undefined</code></td><td><strong>抛给发出方，后面的不运行</strong>（<code>ran=[L1,L2-throws]</code>）</td><td>被丢弃，成为进程级 <code>unhandledRejection</code></td></tr>
+    <tr><td><code>parallel</code></td><td>全部并发，<code>Promise.allSettled</code></td><td><code>undefined</code></td><td>全部运行，最后抛 <code>AggregateError</code>（<code>ran=[L1,L2-throws,L3]</code>）</td><td>同左</td></tr>
+    <tr><td><code>serial</code></td><td>依次 await</td><td>第一个 bail 值</td><td>reject，后面的不运行</td><td>同左</td></tr>
+    <tr><td><code>bail</code></td><td>同步依次调用，不 await</td><td>第一个 bail 值</td><td>抛出，后面的不运行</td><td>不处理</td></tr>
+    <tr><td><code>waterfall</code></td><td>由监听器的 <code>next()</code> 决定</td><td>最外层的返回值</td><td>沿调用链抛出</td><td>沿 promise 链 reject</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><p>源码很短，差别一眼可见：<code>parallel</code> 把每个回调包进 <code>async</code> 再 <code>allSettled</code>，所以一个出错不影响其他；<code>emit</code> 就是一个裸 <code>for</code> 循环。<code>serial</code> 和 <code>bail</code> 用 <code>isBailed</code> 判断是否停下，它只把 <code>null</code>、<code>false</code>、<code>undefined</code> 当作“继续”，<strong><code>0</code> 和空字符串都会短路</strong>。<code>bail</code> 不 await，第一个 async 监听器返回的 Promise 本身就是 bail 值（实验 02：<code>bail -&gt; Promise { 'A' }</code>）。</p>
+<p>harness 自有事件的分布是：emit 66、waterfall 22、parallel 9、serial 2、bail 1。观察通知用 <code>emit</code>；允许别人改写或否决的决策用 <code>waterfall</code>（<code>tools/*-execute</code>、<code>agent/pre-step</code>、<code>approval/request</code>）；需要等全部完成的扇出用 <code>parallel</code>（<code>session/flush</code>、<code>workspace/session-stop</code>）。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/events.ts:193-238">vendor/cordis/src/events.ts:193-238</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  async parallel(...args: any[]) {
+    const [thisArg, callbacks, name] = this._resolve('parallel', args)
+    const results = await Promise.allSettled(callbacks.map(async callback =&gt; Reflect.apply(callback, thisArg, args)))
+    const errors = results.filter((result): result is PromiseRejectedResult =&gt; result.status === 'rejected')
+    if (!errors.length) return
+    const label = typeof name === 'symbol' ? String(name) : `"${name}"`
+    throw new AggregateError(errors.map(error =&gt; error.reason), `one or more listeners of event ${label} failed`)
+  }
+
+  /**
+   * Run listeners synchronously without waiting for returned promises.
+   *
+   * @param args — optional `this`, the event name, then listener arguments.
+   */
+  emit(...args: any[]) {
+    const [thisArg, callbacks] = this._resolve('emit', args)
+    for (const callback of callbacks) Reflect.apply(callback, thisArg, args)
+  }
+
+  /**
+   * Run listeners in order, awaiting each, until one returns a bail value.
+   *
+   * @param args — optional `this`, the event name, then listener arguments.
+   * @returns the first bail value (see {@link isBailed}), if any.
+   */
+  async serial(...args: any[]) {
+    const [thisArg, callbacks] = this._resolve('serial', args)
+    for (const callback of callbacks) {
+      const result = await Reflect.apply(callback, thisArg, args)
+      if (isBailed(result)) return result
+    }
+  }
+
+  /**
+   * Run listeners synchronously until one returns a bail value.
+   *
+   * @param args — optional `this`, the event name, then listener arguments.
+   * @returns the first bail value (see {@link isBailed}), if any.
+   */
+  bail(...args: any[]) {
+    const [thisArg, callbacks] = this._resolve('bail', args)
+    for (const callback of callbacks) {
+      const result = Reflect.apply(callback, thisArg, args)
+      if (isBailed(result)) return result
+    }
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>dsh 不用裸 emit 发通知</h3>
+<p>正因为 <code>emit</code> 不隔离，仓库的防御性规范要求“在分发器中隔离回调异常”。vendored Cordis 为此保留了 <code>events.dispatch(type, args)</code>：它只返回筛选、绑定好的回调列表，由发出方自己逐个调用，源码注释写明这是为了“per-listener error containment”。</p>
+<p>dsh 的通知类发出方都是同一个写法：<code>tools/result</code>、agent 通知、session 观察者、<code>web/providers-changed</code>，以及 Cordis 自己的 <code>internal/plugin</code>。右边是 <code>tools/result</code> 的版本：同步 throw 用 try/catch 接住，async reject 用 <code>.catch</code> 接住，都只记一条 warn。</p>
+<p><code>dispatch</code> 会用 <code>args.shift()</code> <strong>原地</strong>拿掉数组开头的 thisArg 和事件名，dsh 正是利用这一点用同一个数组调用回调。你自己写插件发事件时，照抄这个模式即可，后文示例插件就是这么做的。</p>
+<blockquote><p>不是观察类的事件则“捕获后关闭失败”：<code>approval/request</code> 先进入 promise 链，把同步 throw 也变成 rejection，再归一成 <code>'unavailable'</code>；工具 waterfall 里的异常由 pipeline 的 try/catch 转成工具错误结果。</p></blockquote></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/core/tools/src/pipeline.ts:419-439">packages/core/tools/src/pipeline.ts:419-439</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  /** Notify observers without exposing a mutation or error channel into the outcome. */
+  private notifyResult(exec: ToolExecution, result: ToolExecutionResult): void {
+    // Freeze the registry's live object before observers receive its readonly
+    // WeakMap-keyable view.
+    Object.freeze(exec)
+    const { name: toolName, callId } = exec
+    const reportFailure = (error: unknown): void =&gt; {
+      this.ctx.logger.warn(`tool "${toolName}" (${callId}): tools/result observer failed: ${toolErrorMessage(error)}`)
+    }
+    const callbacks = this.ctx.events.dispatch('emit', [
+      scopeTarget(this.tools, exec.agent), 'tools/result', exec, result,
+    ])
+    for (const callback of callbacks) {
+      try {
+        const returned: unknown = callback(exec, result)
+        void Promise.resolve(returned).catch(reportFailure)
+      } catch (error: unknown) {
+        reportFailure(error)
+      }
+    }
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>waterfall：不调 next() 是否决，调了不 return 是 bug</h2>
+<div class="row"><div class="row-text"><p><code>waterfall</code> 把最后一个参数当作最内层的默认行为，监听器依次收到 <code>(...args, next)</code>，从外到内包成洋葱。实现只有十几行，规则全在里面：</p>
+<ul>
+  <li><strong>不调 <code>next()</code> 就是否决</strong>，内层默认行为不运行</li>
+  <li><strong>同一个 <code>next</code> 调两次会同步抛错</strong>，所以重试要写在 <code>tools/execute</code> 包装器里处理 <code>next</code> 的结果，而不是多次调用 <code>next</code></li>
+  <li><strong>调了 <code>next()</code> 却忘了 <code>return</code>，调用方拿到 <code>undefined</code></strong>。只做观察的监听器要写成 <code>const r = await next(); …; return r</code></li>
+</ul></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/events.ts:250-265">vendor/cordis/src/events.ts:250-265</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  waterfall(...args: any[]) {
+    const [thisArg, callbacks] = this._resolve('waterfall', args)
+    const inner = args.pop()
+    const dispatch = () =&gt; {
+      const callback = callbacks.shift()
+      if (!callback) return inner()
+      let called = false
+      const next = () =&gt; {
+        if (called) throw new Error('next() called multiple times')
+        called = true
+        return dispatch()
+      }
+      return Reflect.apply(callback, thisArg, [...args, next])
+    }
+    return dispatch()
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>实验 03 把洋葱结构打了出来。<code>P</code> 是用 <code>prepend</code> 注册的，所以排在最外层；L2 否决时 INNER 不运行，但 L1 仍在返回路径上把否决结果转成大写。最后一行就是“忘了 return”：在 <code>tools/pre-execute</code> 里，这会让后续读 <code>gate.kind</code> 时抛 TypeError，被 pipeline 转成一条工具错误。</p>
+<p>Cordis 自己也用 waterfall：<code>internal/update</code> 以 <code>restart</code> 作为 inner。插件可以监听它，对“只改日志级别”这类变更不调 <code>next()</code>，实现就地更新而不重启（实验 06：改 level 时 <code>applies = 1</code>，改 port 才 <code>apply #2</code>）。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="实验 03：waterfall 的顺序、变换、否决、next() 两次、忘记 return">实验 03：waterfall 的顺序、变换、否决、next() 两次、忘记 return</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">// waterfall: order, transform, veto, next() twice, no listeners
+const { Context } = await import(process.argv[2])
+const root = new Context()
+console.log('no listeners -&gt;', await root.waterfall('w/t', 'hi', async () =&gt; 'inner:hi'))
+await root.plugin({
+  name: 'wf',
+  apply(ctx) {
+    ctx.on('w/t', async (input, next) =&gt; { console.log('  L1 before'); const r = await next(); console.log('  L1 after, got', r); return r.toUpperCase() })
+    ctx.on('w/t', async (input, next) =&gt; { console.log('  L2 before'); if (input.includes('blocked')) return 'vetoed-by-L2'; const r = await next(); console.log('  L2 after'); return r + '!' })
+    ctx.on('w/t', (input, next) =&gt; { console.log('  P (prepend) before'); return next() }, { prepend: true })
+  },
+})
+console.log('normal -&gt;', await root.waterfall('w/t', 'hi', async () =&gt; { console.log('  INNER runs'); return 'inner:hi' }))
+console.log('veto   -&gt;', await root.waterfall('w/t', 'blocked', async () =&gt; { console.log('  INNER runs'); return 'inner' }))
+const r2 = new Context()
+await r2.plugin({ name: 'twice', apply(ctx) { ctx.on('w/2', (next) =&gt; { next(); return next() }) } })
+try { r2.waterfall('w/2', () =&gt; 'inner') } catch (e) { console.log('next() twice -&gt;', e.message) }
+const r3 = new Context()
+await r3.plugin({ name: 'forgot-return', apply(ctx) { ctx.on('w/3', async (next) =&gt; { await next() /* forgot to return */ }) } })
+console.log('listener calls next() but forgets to return -&gt;', await r3.waterfall('w/3', async () =&gt; ({ kind: 'allow' })))</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 03 输出">实验 03 输出</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>no listeners -&gt; inner:hi
+  P (prepend) before
+  L1 before
+  L2 before
+  INNER runs
+  L2 after
+  L1 after, got inner:hi!
+normal -&gt; INNER:HI!
+  P (prepend) before
+  L1 before
+  L2 before
+  L1 after, got vetoed-by-L2
+veto   -&gt; VETOED-BY-L2
+next() twice -&gt; next() called multiple times
+listener calls next() but forgets to return -&gt; undefined</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>顺序、thisArg 和作用域过滤</h3>
+<p>监听器顺序只由注册时间和 <code>prepend</code> 决定，后注册的 prepend 排在最前（实验 01：<code>Q, P, A, B, O</code>），没有优先级参数。别的插件随时能插到你前面，所以 user-approval 把 <code>never</code> 策略写在服务代码路径里，而不是写成监听器。<code>ctx.on</code> 返回的 disposer，文档说“仍注册则返回 <code>true</code>”，实测两次都返回 <code>undefined</code>，<strong>不要依赖这个返回值</strong>。</p>
+<p>所有分发方法都先经过 <code>_resolve</code>：第一个参数如果是对象或函数，就被当成 thisArg 拿掉，它上面的 <code>[Context.filter]</code> 决定哪些 ctx 的监听器能收到事件。dsh 用 <code>scopeTarget(base, key)</code> 构造只带 filter 的 carrier：<strong>没打 scope 标签的监听器收到所有 agent 的事件，带标签的只收到本作用域及其后代的事件</strong>。</p>
+<p>还有一个常见误会：<code>turn/*</code>、<code>tool/result</code>、<code>compaction/*</code> 是持久会话事件类型，<strong>不是 Cordis 事件</strong>，<code>ctx.on('turn/start')</code> 永远不会触发，要监听 <code>session/event</code> 再判断 <code>event.type</code>。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>一次工具调用经过的扩展点</h3>
+<p>把上面几种模式放回 harness 里看，一次工具调用依次经过五个扩展点。cookbook 对分工写得很明确：可重排的策略写在 <code>pre-execute</code>，单调的最终拒绝用 <code>ctx.tools.guard()</code>，包裹执行用 <code>execute</code>，变换用 <code>post-execute</code>，只读观察用 <code>result</code>。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 2：一次工具调用依次经过的扩展点（参数校验在第三格里面）</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 680 230" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="工具调用流水线">
+<defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#504e49"/></marker></defs>
+<g font-size="11" fill="#504e49" text-anchor="middle">
+<rect x="10" y="40" width="118" height="92" rx="8" fill="#EEF2F7" stroke="#1B365D" stroke-width="1.2"/>
+<text x="69" y="62" font-size="12" font-weight="600" fill="#141413">tools/pre-execute</text>
+<text x="69" y="80">waterfall</text><text x="69" y="98">allow / deny /</text><text x="69" y="114">cancel / ask</text>
+<rect x="148" y="40" width="108" height="92" rx="8" fill="#EEF2F7" stroke="#1B365D" stroke-width="1.2"/>
+<text x="202" y="62" font-size="12" font-weight="600" fill="#141413">tools.guard()</text>
+<text x="202" y="80">不是事件</text><text x="202" y="98">allow 之后才跑</text><text x="202" y="114">单调拒绝</text>
+<rect x="276" y="40" width="128" height="92" rx="8" fill="#1B365D" stroke="#1B365D" stroke-width="1.2"/>
+<text x="340" y="62" font-size="12" font-weight="600" fill="#fff">tools/execute</text>
+<text x="340" y="80" fill="#dfe7f1">waterfall，inner =</text><text x="340" y="98" fill="#dfe7f1">工具主体</text><text x="340" y="116" fill="#fff" font-weight="600">参数校验在这里</text>
+<rect x="424" y="40" width="118" height="92" rx="8" fill="#EEF2F7" stroke="#1B365D" stroke-width="1.2"/>
+<text x="483" y="62" font-size="12" font-weight="600" fill="#141413">tools/post-execute</text>
+<text x="483" y="80">waterfall</text><text x="483" y="98">accept / 替换 /</text><text x="483" y="114">block</text>
+<rect x="562" y="40" width="108" height="92" rx="8" fill="#EEF2F7" stroke="#1B365D" stroke-width="1.2"/>
+<text x="616" y="62" font-size="12" font-weight="600" fill="#141413">tools/result</text>
+<text x="616" y="80">emit，逐个 try</text><text x="616" y="98">只读、已冻结</text><text x="616" y="114">不被 await</text>
+</g>
+<line x1="129" y1="86" x2="146" y2="86" stroke="#504e49" stroke-width="1.4" marker-end="url(#a2)"/>
+<line x1="257" y1="86" x2="274" y2="86" stroke="#504e49" stroke-width="1.4" marker-end="url(#a2)"/>
+<line x1="405" y1="86" x2="422" y2="86" stroke="#504e49" stroke-width="1.4" marker-end="url(#a2)"/>
+<line x1="543" y1="86" x2="560" y2="86" stroke="#504e49" stroke-width="1.4" marker-end="url(#a2)"/>
+<text x="340" y="24" text-anchor="middle" font-size="11" font-weight="600" fill="#141413">四个按 agent 过滤的事件都以 scopeTarget(tools, exec.agent) 作 thisArg</text>
+<path d="M 69 134 L 69 172 L 340 172 L 340 134" fill="none" stroke="#9a3412" stroke-width="1.3" stroke-dasharray="5 4"/>
+<text x="204" y="192" text-anchor="middle" font-size="11" fill="#141413">门禁和 guard 看到的是未校验的参数：</text>
+<text x="204" y="208" text-anchor="middle" font-size="11" fill="#504e49">{"name":42} 照样走过 pre-execute，JSON 解析失败时甚至是原始字符串</text>
+<text x="616" y="160" text-anchor="middle" font-size="11" fill="#504e49">在 execute() 的</text>
+<text x="616" y="176" text-anchor="middle" font-size="11" fill="#504e49">promise 兑现前发出</text>
+</svg></div></figure></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>阶段</th><th>事件（模式）</th><th>inner 默认值</th><th>监听器能做什么</th></tr></thead>
+  <tbody>
+    <tr><td>门禁</td><td><code>tools/pre-execute</code>（waterfall）</td><td><code>{ kind: 'allow' }</code></td><td>allow / deny / cancel / ask；ask 交给 <code>ctx.get('approval')</code>，没有审批服务时降级为 deny</td></tr>
+    <tr><td>守卫</td><td><code>tools.guard()</code>（不是事件）</td><td>—</td><td>只在 allow 后执行，单调拒绝</td></tr>
+    <tr><td>执行</td><td><code>tools/execute</code>（waterfall）</td><td>工具主体</td><td>超时、重试、计量；只允许改 <code>exec.signal</code></td></tr>
+    <tr><td>变换</td><td><code>tools/post-execute</code>（waterfall）</td><td><code>{ kind: 'accept' }</code></td><td>替换 content <strong>或</strong> value（不能都换）、<code>block</code>、附加 <code>additionalContexts</code></td></tr>
+    <tr><td>观察</td><td><code>tools/result</code>（emit，逐个隔离）</td><td>—</td><td>只读，exec 和 result 已冻结；不会被 await</td></tr>
+    <tr><td>变更</td><td><code>tools/change</code>（emit，不过滤）</td><td>—</td><td>注册表增删通知</td></tr>
+  </tbody>
+</table></div>
+</section>
+<section class="sec"><h2>配置在激活时才校验，volatile 要五个条件同时成立</h2>
+<div class="row"><div class="row-text"><p>插件的配置 schema 从哪里来？Cordis 在 <code>registry.plugin()</code> 第一次遇到某个插件时，从<strong>插件对象</strong>上读 <code>Config</code>。Loader 导入模块后先取 <code>exports.default ?? exports</code>。两者叠在一起就是第一个坑：<strong><code>export default function apply</code> 搭配具名 <code>export const Config</code>，Config 会被静默丢掉</strong>，插件收到 <code>config = undefined</code>，必填字段也不校验（实验 E1）。正确写法是不写 default、只具名导出 <code>Config</code> 和 <code>apply</code>，或者 default 导出一个带 <code>static Config</code> 的类。</p>
+<p>校验的时机是<strong>激活时</strong>：<code>_runner.execute</code> 先 <code>resolveConfig</code>，再调插件。所以 PENDING 插件的配置错误要等依赖到齐才暴露。<code>Config</code> 必须是 Standard Schema，不能异步校验。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/registry.ts:322-330">vendor/cordis/src/registry.ts:322-330</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">    let runtime = this._internal.get(callback)
+    if (!runtime) {
+      let name = plugin.name
+      if (name === 'apply') name = undefined
+      runtime = { name, callback, fibers: new DisposableList(), Config: plugin.Config }
+      this._internal.set(callback, runtime)
+    }
+
+    const fiber = new Fiber(this.ctx, config, Inject.resolve(plugin.inject), runtime, getOuterStack)</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/cordis/src/fiber.ts:272-291">vendor/cordis/src/fiber.ts:272-291</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">      this._runner = {
+        epoch: INACTIVE,
+        getOuterStack,
+        execute: function (this: Fiber) {
+          const config = this.resolveConfig(this.config)
+          this._effectiveConfig = config
+          if (isConstructor(runtime.callback)) {
+            // eslint-disable-next-line new-cap
+            const instance = new runtime.callback(this.ctx, config)
+            for (const hook of instance?.[symbols.initHooks] ?? []) {
+              hook()
+            }
+            return instance?.[symbols.init]?.()
+          } else {
+            return runtime.callback(this.ctx, config)
+          }
+        },
+        collect,
+      }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>Loader 在 <code>internal/config</code> waterfall 里登记了两个监听器，实际执行顺序是 <code>!!js</code> 插值、校验、把错误位置改写成 cordis.yml 的行列号。所以校验失败时，报错能直接指到 yml 的第几行第几列。</p>
+<p>出错条目进入 FAILED，进程不退出，其他条目照常运行。教程里“打印错误后以状态码 1 退出”是教程启动器自己的行为。<strong>FAILED 不会自愈</strong>，修好依赖不够，只有 <code>fiber.update()</code> 能清掉错误。对 ACTIVE 的 Fiber 调 <code>fiber.update(bad)</code> 时校验是同步的，会当场抛错。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 E1 输出：非法配置的报错指到 cordis.yml 行列">实验 E1 输出：非法配置的报错指到 cordis.yml 行列</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>entry 2928a2d0:bad: state=FAILED
+  ValidationError: invalid config:
+  - $.targets expected array but got not-an-array (at targets, &lt;lab-config&gt;/scripts/e1/cordis.yml:4:14)
+  stack:
+  - $.targets expected array but got not-an-array (at targets, &lt;lab-config&gt;/scripts/e1/cordis.yml:4:14)
+    at bad (&lt;lab-config&gt;/scripts/e1/cordis.yml:1:3)</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>volatile：五个条件全部满足才免重启</h3>
+<p><code>Entry.update()</code> 只有在五个条件<strong>同时</strong>满足时才走 volatile 路径：变化的键只有 <code>config</code>；Fiber 是 ACTIVE；context 原型没变；<code>equalExceptVolatile(旧, 新, schema)</code> 为真；<code>_commitVolatile()</code> 完整解析候选值后，普通字段的有效值仍然深相等。满足时，新值写进运行中的 volatile 引用，只向这一个 Fiber 发一次 <code>loader/volatile-update</code>；否则走 partial-dispose 加 <code>fiber.update(config, true)</code>，也就是重启。</p>
+<p>实验 E2 的前两步是对照：step 1 只改 <code>level</code>（volatile），没有 dispose 也没有 apply，只收到一次 volatile-update；step 2 同时改了 <code>level</code> 和普通字段 <code>mode</code>，插件先 dispose 再 apply，没有 volatile 事件。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/loader/src/config/entry.ts:155-171">vendor/loader/src/config/entry.ts:155-171</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">    // step 3: check if options are changed
+    if (this.fiber?.uid) {
+      const changes = Object.keys({ ...this.options, ...legacy })
+        .filter(key =&gt; !deepEqual(this.options[key], legacy[key], key === 'config'))
+      // Only an active fiber in an unchanged context takes volatile-only config changes without a remount.
+      const volatileOnly = changes.length === 1 &amp;&amp; changes[0] === 'config'
+        &amp;&amp; this.fiber.state === FiberState.ACTIVE &amp;&amp; Object.getPrototypeOf(this.ctx) === this.parent.ctx
+        &amp;&amp; equalExceptVolatile(legacy.config, this.options.config, this.fiber.runtime?.Config)
+      if (volatileOnly) this.fiber.rawConfig = this.options.config
+      const pending = volatileOnly &amp;&amp; this._commitVolatile() ? [] : changes
+      if (!pending.length &amp;&amp; !force) return
+      this.context.emit('loader/partial-dispose', this, legacy, true)
+      await this._patchContext(pending)
+    } else {
+      await this.init()
+    }
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 E2 输出：volatile 原地更新、普通字段重启、匿名行 id、!!js 的 disabled">实验 E2 输出：volatile 原地更新、普通字段重启、匿名行 id、!!js 的 disabled</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>  [keep] apply mode=fast level=1
+  [anon] apply mode=fast level=1
+ids after step 0: keep(keep) d105eab2(anon) gated(gated)
+--- step 1
+  [keep] volatile-update paths=[["level"]] level=5
+ids after step 1: keep(keep) d105eab2(anon) gated(gated)
+--- step 2
+  [keep] dispose
+  [anon] dispose
+  [keep] apply mode=slow level=6
+  [anon] apply mode=slow level=1
+ids after step 2: keep(keep) gated(gated) b06fcc51(anon)
+--- step 3
+  (GATE=on, file untouched; calling include.refresh())
+ids after step 3: keep(keep) gated(gated) b06fcc51(anon)
+--- step 4
+  [keep] dispose
+  [gated] apply mode=y level=1
+ids after step 4: keep(keep) gated(gated) b06fcc51(anon)
+--- file on disk now:
+- id: keep
+  name: ./probe.mjs
+  disabled: true
+  config: { label: keep, mode: slow }
+- name: ./probe.mjs
+  config: { label: anon, mode: slow }
+- id: gated
+  name: ./probe.mjs
+  disabled: !!js process.env.GATE !== 'on'
+  config: { label: gated, mode: y }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>再补三点。给 volatile 字段写入非法值只得到一条 warn，Fiber 仍是 ACTIVE、引用仍是旧值，<strong>但这次编辑已经写回磁盘</strong>，下次激活时插件会 FAILED（实验 E3）。<code>loader/volatile-update</code> 是不等待的 emit，监听器的异常会被吞掉。volatile 值要每次 <code>.get()</code> 现读，不能缓存。</p></div><div class="row-media"></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>!!js：只对 config 和 disabled 求值</h3>
+<p><code>!!js</code> 是 Include 定义的 YAML 标签，用 <code>new Function</code> 加 <code>with (ctx)</code> 求值，拥有完整的进程权限，所以 <strong>patch 文件要当代码对待</strong>，用 <code>--patch</code> 加载不可信文件等于执行不可信代码。它只在两处生效：<code>config</code> 在激活时用插件自己的 ctx 求值，可以用它 inject 的服务；<code>disabled</code> 在每次树协调时用 Loader 一侧的 ctx 求值。</p>
+<p><code>disabled: !!js</code> <strong>不是响应式的</strong>。上面 E2 的 step 3 只改了环境变量、没动文件，<code>include.refresh()</code> 发现文件内容没变就直接返回，<code>gated</code> 没有挂载；step 4 改了文件之后才挂上。base bundle 正是用 <code>disabled: !!js "!ctx.get('profileContext')"</code> 控制 plugin-manager 和 hmr 两行。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>cordis.yml 按 id 协调，patch 整块替换 config</h2>
+<div class="row"><div class="row-text"><p>Loader 本身是一棵只存在于内存的条目树。<code>cordis:include</code> 条目读 YAML、应用 patches，再交给 <code>EntryGroup.update()</code> 按 id 协调：新列表里的 id 一律 create，由 <code>Entry.update</code> 决定不做事、提交 volatile 还是重启；只在旧列表里的 id 被 remove。profile 模式下，dsh 把各层拼成一份扁平的 patch 列表交给根 Include。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 3：profile 模式下各层 patch 被拍平成一张列表，交给根 Include 按 id 协调</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="配置分层">
+<defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#504e49"/></marker></defs>
+<g font-size="11" fill="#504e49">
+<rect x="14" y="20" width="250" height="36" rx="6" fill="#EEF2F7" stroke="#1B365D"/><text x="26" y="43"><tspan font-weight="600" fill="#141413">1 bundles</tspan>  按 dsh.profile.bundles 顺序</text>
+<rect x="14" y="64" width="250" height="36" rx="6" fill="#EEF2F7" stroke="#1B365D"/><text x="26" y="87"><tspan font-weight="600" fill="#141413">2 profile</tspan>  目录里的 cordis.patch.yml</text>
+<rect x="14" y="108" width="250" height="36" rx="6" fill="#EEF2F7" stroke="#1B365D"/><text x="26" y="131"><tspan font-weight="600" fill="#141413">3 home</tspan>  $DSH_HOME/cordis.patch.yml</text>
+<rect x="14" y="152" width="250" height="36" rx="6" fill="#EEF2F7" stroke="#1B365D"/><text x="26" y="175"><tspan font-weight="600" fill="#141413">4 --patch</tspan>  按 argv 顺序</text>
+<rect x="14" y="196" width="250" height="36" rx="6" fill="#fff" stroke="#1B365D" stroke-dasharray="5 4"/><text x="26" y="219"><tspan font-weight="600" fill="#141413">5 派生</tspan>  可能追加的禁用遥测 patch</text>
+</g>
+<line x1="265" y1="126" x2="318" y2="126" stroke="#504e49" stroke-width="1.4" marker-end="url(#a3)"/>
+<text x="292" y="116" text-anchor="middle" font-size="11" fill="#504e49">拍平</text>
+<rect x="320" y="92" width="150" height="68" rx="8" fill="#1B365D"/>
+<text x="395" y="116" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">根 Include</text>
+<text x="395" y="134" text-anchor="middle" font-size="11" fill="#dfe7f1">id: include</text>
+<text x="395" y="150" text-anchor="middle" font-size="11" fill="#dfe7f1">config.patches = 列表</text>
+<line x1="471" y1="126" x2="508" y2="126" stroke="#504e49" stroke-width="1.4" marker-end="url(#a3)"/>
+<rect x="510" y="92" width="156" height="68" rx="8" fill="#EEF2F7" stroke="#1B365D"/>
+<text x="588" y="116" text-anchor="middle" font-size="12" font-weight="600" fill="#141413">EntryGroup.update</text>
+<text x="588" y="134" text-anchor="middle" font-size="11" fill="#504e49">按 id：新 → create</text>
+<text x="588" y="150" text-anchor="middle" font-size="11" fill="#504e49">只在旧列表 → remove</text>
+<rect x="320" y="196" width="346" height="84" rx="8" fill="#fbe9e2" stroke="#9a3412"/>
+<text x="334" y="218" font-size="12" font-weight="600" fill="#141413">按 id 覆盖是逐键整值替换，不做深合并</text>
+<text x="334" y="238" font-size="11" fill="#504e49">bundle：  - id: x  config: { a: 1, b: 2 }</text>
+<text x="334" y="254" font-size="11" fill="#504e49">用户层：  - id: x  config: { b: 3 }</text>
+<text x="334" y="270" font-size="11" fill="#141413" font-weight="600">结果：    config: { b: 3 }，a 没了（实验 E5）</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><p>层的顺序是：各 bundle、profile 目录的 <code>cordis.patch.yml</code>、<code>$DSH_HOME/cordis.patch.yml</code>、命令行 <code>--patch</code>，最后可能追加一条禁用遥测的 patch。<code>--dump-config</code> 和真正挂载走的是同一个 <code>applyEntryPatches</code>，所以用它核对最终组合是可靠的。</p>
+<p>合并规则是<strong>逐键整值替换</strong>：右边第 167–170 行对 overrides 的每个键直接 <code>target[key] = value</code>。仓库多处明文写着“does not deep-merge”。对插件作者的结论只有一条：<strong>默认值写在 schema 的 <code>.default()</code> 里</strong>，写在 bundle patch 里的“默认值”会被用户层整块覆盖。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/boot/app-boot/src/profile-context.ts:75-86">packages/boot/app-boot/src/profile-context.ts:75-86</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">export function readProfilePatches(binName: string, context: ProfileContext, initialProfile?: Profile): PatchOptions[] {
+  const patches = structuredClone([
+    ...readBundlePatches(binName, context, initialProfile),
+    ...(initialProfile?.patches ?? loadOptionalPatches(binName, context.patchPath) ?? []),
+    ...(loadOptionalPatches(binName, join(context.home, PROFILE_PATCH_FILENAME)) ?? []),
+    ...context.overlayPaths.flatMap(path =&gt; loadOverlayPatches(binName, path)),
+  ])
+  const telemetryPatch = resolveTelemetryPatch(context.telemetryDisabledEnv,
+    composeEntries([patches]).some(row =&gt; row.id === TELEMETRY_ROW_ID))
+  if (telemetryPatch !== undefined) patches.push(telemetryPatch)
+  return patches
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="vendor/include/src/patch.ts:160-172">vendor/include/src/patch.ts:160-172</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">    // the entries of a group config the patch replaces go away with it
+    if ('config' in overrides &amp;&amp; target.group &amp;&amp; Array.isArray(target.config)) {
+      unmount(target.config)
+    }
+
+    const overridden = keys.get(id) ?? new Map&lt;string, number&gt;()
+    keys.set(id, overridden)
+    for (const [key, value] of Object.entries(overrides)) {
+      target[key] = value
+      overridden.set(key, index)
+    }
+
+    // entries of a group config the patch supplies can be patched in turn</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>实验 E5 还确认了三条边角规则：<code>name</code> 与目标不一致的覆盖整体跳过，只留一条 warn；目标不存在时也只 warn；后面的层用 <code>insert</code> 写同一个 id，运行时<strong>整行替换</strong>，连模块都换掉（E6 里加载的是后插入的 <code>p2.mjs</code>）。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 E5 输出：x 的 config 从 {a:1,b:2} 变成 {b:3}">实验 E5 输出：x 的 config 从 {a:1,b:2} 变成 {b:3}</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>  warn: patch: name mismatch for "x" (expected "pkg-x", got "other-name"), skipping
+  warn: patch: entry "missing" not found
+[
+ {
+  "id": "x",
+  "name": "pkg-x",
+  "config": {
+   "b": 3
+  },
+  "disabled": {
+   "__jsExpr": "process.platform === 'win32'"
+  }
+ },
+ {
+  "id": "grp",
+  "name": "cordis:group",
+  "group": true,
+  "config": [
+   {
+    "id": "child",
+    "name": "pkg-child",
+    "config": {
+     "deep": 2
+    }
+   }
+  ]
+ },
+ {
+  "id": "x",
+  "name": "pkg-x2"
+ }
+]</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>匿名行、条目 inject 和自释放</h3>
+<p><strong>教程 06 关于匿名行的说法在这个 commit 上已经过时。</strong> 教程说没有 id 的行“每次读取都会获得新 id，只要配置文件有任何编辑就会被删除重建”。但 Include 的 <code>_assignIds</code> 会让与上次读取的某个匿名行深相等的行沿用旧 id。上面 E2 的输出里，匿名行在 step 1 编辑相邻行时保持 <code>d105eab2</code>；step 2 改了它自己的 <code>mode</code>，才换成新 id <code>b06fcc51</code> 并重建。结论不变：<strong>每一行都写显式 <code>id</code></strong>，否则一改自身配置就删除重建，失去 volatile 的机会，patch 也无法定位它。</p>
+<p>另外两个不起眼的行为：</p>
+<ul>
+  <li>条目上写的 <code>inject</code> 会<strong>叠加</strong>到插件自己的 inject 上，yml 里一个笔误就能让插件永久 PENDING，没有任何提示</li>
+  <li>插件自己调 <code>ctx.fiber.dispose()</code> 时，Loader 会把 <code>disabled: true</code> <strong>写回用户文件</strong>（排除 8 种非自释放情形后）。需要“暂时停一下”时不要用自释放</li>
+</ul></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>HMR：以插件为单位替换，失败就回滚</h3>
+<p>dsh 挂载的是自己的 <code>@deepseek-ai/dsh-hmr</code>。它要求 Node 内部 ESM loader 可用（<code>--expose-internals</code> 或 native addon），而且 <strong>base bundle 默认 <code>root: []</code>，也就是只热重载 profile 配置</strong>，模块热替换要主动开启。没挂载 <code>timer</code> 时，HMR 静默停在 PENDING。</p>
+<p>文件变化先经 <code>ctx.debounce</code> 合并，然后分四类：进程入口静态依赖图里的文件调用 <code>loader.exit()</code> 请求整进程重启；ESM 缓存里已有的模块进入部分重载；某个 Include 的配置文件调用 <code>include.refresh()</code>；其余文件只 emit <code>hmr/change</code>。注意最后一行：<strong>主 watcher 只监听 <code>change</code>，新建文件不触发任何动作</strong>。</p>
+<p>部分重载沿 ESM 依赖图向上找出受影响的 Loader 条目，逐出缓存并保留备份，重新 import，在原父 ctx 上用原配置重新挂载；任何一步失败都回滚，把旧插件挂回去。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/boot/hmr/src/index.ts:436-489">packages/boot/hmr/src/index.ts:436-489</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">    this.watcher = watch(root, {
+      ...this.config,
+      cwd: watchBaseDir,
+      ignored: path =&gt; match(relative(watchBaseDir, path)),
+      ignoreInitial: true,
+    })
+
+    const changed = new Set&lt;string&gt;()
+    const dispatch = this.ctx.debounce(() =&gt; {
+      void this.runExclusive(async () =&gt; {
+        if (!await this.applicationReady) return
+        const batch = [...changed]
+        changed.clear()
+        const includes = new Set&lt;Include&gt;()
+        let fullReload = false
+        for (const path of batch) {
+          const filename = canonicalPath(resolve(watchBaseDir, path))
+          const configuredFilename = resolve(this.baseDir, path)
+          if (this.configPaths.has(filename) || this.configPaths.has(configuredFilename)) continue
+          const isManifest = basename(filename) === 'package.json' &amp;&amp; !filename.includes(`${sep}node_modules${sep}`)
+          if (isManifest) {
+            this.manifests.invalidate(filename)
+          }
+          const url = pathToFileURL(filename).href
+          if (this.externals.has(url)) {
+            fullReload = true
+            continue
+          }
+          if (this.esmHas(url) || this.esmHas(url, 'json')) {
+            this.stashed.add(url)
+            continue
+          }
+          if (isManifest) continue
+          const include = [...loader.entries()].map(entry =&gt; entry.subtree as Include | undefined)
+            .find(tree =&gt; tree?.filename === filename || tree?.filename === configuredFilename)
+          if (include !== undefined) includes.add(include)
+          else this.ctx.emit('hmr/change', url)
+        }
+        if (!fullReload &amp;&amp; includes.size === 0 &amp;&amp; this.stashed.size === 0) return
+        if (fullReload) {
+          loader.exit()
+          return
+        }
+        for (const include of includes) {
+          // A rejected refresh reports unsaved runtime changes; Include keeps its running tree.
+          try { await include.refresh() } catch (error) { this.ctx.logger.warn(error) }
+        }
+        if (this.stashed.size &gt; 0) {
+          try { await this.partialReload() } finally { this.stashed.clear() }
+        }
+        await loader.await()
+      }).catch((error: unknown) =&gt; { this.ctx.logger.warn(error) })
+    }, this.config.debounce)
+    this.watcher.on('change', (path) =&gt; { changed.add(path); dispatch() })</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>实验 E4 覆盖了主要行为：A 改了 <code>hello</code> 的依赖 <code>dep.mjs</code>，只有 <code>hello</code> 重载，<code>other</code> 不受影响；B 三次快速保存被去抖合并成一次；D 改 cordis.yml 只重挂这一条；E 语法错误时旧实例保持 ACTIVE，G 修好后才替换；F 动了进程入口，请求整进程重启。</p>
+<blockquote><p>模块顶层的副作用（定时器、连接、全局注册）在模块被逐出时<strong>不会被清理</strong>，热重载一次就多一份。所有副作用都要放进 <code>apply</code> 或 <code>ctx.effect</code>，上一篇的“模块级状态”一节讲过同一件事。</p></blockquote></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 E4 输出：依赖重载、去抖、配置编辑、语法错误回滚、入口变更">实验 E4 输出：依赖重载、去抖、配置编辑、语法错误回滚、入口变更</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>  [other] apply
+  [hello] apply msg=v1 config={"n":1}
+  &lt;info hmr&gt; watching %o [".","../run.mjs"]
+--- A: edit dep.mjs (dependency of hello only)
+  [hello] dispose msg=v1
+  [hello] apply msg=v2 config={"n":1}
+  &lt;info hmr&gt; reload plugin at %C hello.mjs
+  hmr/reload plugins=hello
+--- B: three quick saves of dep.mjs 40ms apart (debounce 200ms)
+  [hello] dispose msg=v2
+  [hello] apply msg=v3c config={"n":1}
+  &lt;info hmr&gt; reload plugin at %C hello.mjs
+  hmr/reload plugins=hello
+--- C: edit unused.txt (not a loaded module)
+  hmr/change unused.txt
+--- D: edit cordis.yml (hello config n: 1 -&gt; 2)
+  [hello] dispose msg=v3c
+  [hello] apply msg=v3c config={"n":2}
+--- E: syntax error in hello.mjs
+  &lt;warn hmr&gt; Unexpected end of input
+  &lt;warn hmr&gt; Unexpected end of input
+  hello fiber state after failed reload = ACTIVE
+--- G: fix hello.mjs
+  [hello] dispose msg=v3c
+  [hello] apply (fixed) msg=v3c
+  &lt;info hmr&gt; reload plugin at %C hello.mjs
+  hmr/reload plugins=hello
+--- F: touch run.mjs (process entry point = HMR externals)
+  !! loader.exit() called (full reload requested)</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>教程 07 在 4b399c3 上跑不通：缺一行组合，还有一个没写进 inject 的顺序依赖</h2>
+<div class="row"><div class="row-text"><p>教程 07 的组合只列了四行，并解释“<code>dsh-tools</code> 会注入 <code>systemPrompt</code>，所以组合中也要列出该服务的提供方”。但在这个 commit 上，依赖链比教程写的长一截：<code>greet-tool → tools → systemPrompt → sessionProjections</code>。<code>SystemPrompt</code> 自己 inject 了 <code>sessionProjections</code>，而组合里没有提供它的插件。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="docs/cordis-tutorial/07-into-the-harness.zh.md:79-82">docs/cordis-tutorial/07-into-the-harness.zh.md:79-82</span><span class="panel-lang">YAML</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-yaml">- name: '@deepseek-ai/dsh-system-prompt'
+- name: '@deepseek-ai/dsh-tools'
+- name: './tool-logger.ts'
+- name: './greet-tool.ts'</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>原样运行的结果是<strong>没有任何输出，exit 0</strong>。没有报错，因为 PENDING 是合法状态。把每个 Fiber 的状态打出来，整条链都卡在缺失的服务上：</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 A：教程原样组合的状态转储">实验 A：教程原样组合的状态转储</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>[dump] Loader                               ACTIVE
+[dump] isolate                              ACTIVE
+[dump] Include                              ACTIVE
+[dump] tool-logger                          PENDING  missing=tools
+[dump] ToolsService                         PENDING  missing=systemPrompt
+[dump] greet-tool                           PENDING  missing=tools
+[dump] SystemPrompt                         PENDING  missing=sessionProjections</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>逐步补齐组合，四组实验的结果：</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>实验</th><th>组合</th><th>结果</th></tr></thead>
+  <tbody>
+    <tr><td>A</td><td>教程原样四行</td><td>无输出，<code>exit=0</code>；整条链 PENDING</td></tr>
+    <tr><td>B</td><td>+ <code>dsh-session-projection</code></td><td>greet-tool 激活，但它在 <code>apply</code> 里发起的那次 <code>execute</code> 抛 <code>ToolExecutorUnavailableError</code>，未处理的 rejection 让进程崩溃</td></tr>
+    <tr><td>C</td><td>再 + <code>dsh-tool-executor-native</code>，用 Loader 加载</td><td><strong>仍然崩溃</strong>，<code>exit=1</code></td></tr>
+    <tr><td>D</td><td>程序化加载，逐个 <code>await</code>，executor 先于 greet-tool</td><td>输出与教程一致</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><h3>实验 C 为什么还会崩：executor 没有写进任何 inject</h3>
+<p>greet-tool 和 native executor 都只声明了 <code>inject: ['tools']</code>。<code>tools</code> 一就绪，两者同时可以激活，没有任何依赖规定 executor 的 <code>setExecutor()</code> 要先跑，而 greet-tool 在 <code>apply</code> 里立刻就调用了 <code>execute</code>。<code>execute()</code> 本身只做分派：<code>selectExecutor(input.agent).execute(input)</code>，找不到 executor 就抛错。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="教程 07 的 greet-tool.ts（实验 C 所用，与教程一致）">教程 07 的 greet-tool.ts（实验 C 所用，与教程一致）</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { ToolCallId } from '@deepseek-ai/dsh-llm'
+
+export const name = 'greet-tool'
+export const inject = ['tools']
+
+export function apply(ctx: Context) {
+  ctx.tools.register(defineTool({
+    name: 'greet',
+    description: 'Greet the named person.',
+    parameters: {
+      name: { type: 'string', required: true, description: 'Who to greet' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) =&gt; [{ type: 'text', text: value }],
+    },
+    async execute(args) {
+      return `Hello, ${args.name}!`
+    },
+  }))
+
+  // Drive one call through the real execution pipeline, standing in for
+  // the model. ToolCallId brands the correlation id a provider would issue.
+  void (async () =&gt; {
+    const result = await ctx.tools.execute({
+      calls: [{
+        type: 'tool-call', id: brandString&lt;ToolCallId&gt;('demo-1'),
+        name: 'greet', arguments: JSON.stringify({ name: 'Cordis' }),
+      }],
+      signal: new AbortController().signal,
+    })
+    console.log('tool replied:', JSON.stringify(result.results[0]?.result.content))
+  })()
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/core/tools/src/index.ts:353-378">packages/core/tools/src/index.ts:353-378</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  /**
+   * Resolve the nearest scoped provider, or the deployment default.
+   * @param scope - Agent or preset scope; omitted selects only the root contribution.
+   * @returns the selected executor; throws when it is missing or unloaded.
+   */
+  private selectExecutor(scope?: ScopeKey): ToolExecutor {
+    let record: Registration | undefined
+    for (const key of scopeChainOf(scope)) {
+      record = this.scoped.get(key)
+      if (record !== undefined) break
+    }
+    record ??= this.root
+    const executor = record?.executor
+    if (executor === undefined) throw new ToolExecutorUnavailableError()
+    return executor
+  }
+
+  /**
+   * Delegate a raw call batch to its Agent's provider or the deployment default.
+   * Select at dispatch; accepted batches settle through that provider even if it unloads.
+   * @param input - original calls, optional owning Agent, and optional logging step.
+   * @returns the selected executor's settled batch; unavailable selections reject.
+   */
+  async execute(input: ToolBatchInput): Promise&lt;ToolBatchResult&gt; {
+    return this.selectExecutor(input.agent).execute(input)
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验 C 输出：栈指向 greet-tool.ts:28 的 execute">实验 C 输出：栈指向 greet-tool.ts:28 的 execute</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>&lt;lab&gt;/node_modules/@deepseek-ai/dsh-tools/lib/index.js:633
+		if (executor === void 0) throw new ToolExecutorUnavailableError();
+		                               ^
+
+ToolExecutorUnavailableError: The selected tool executor is unavailable. Load an executor in this composition before running the agent.
+    at Proxy.selectExecutor (&lt;lab&gt;/node_modules/@deepseek-ai/dsh-tools/lib/index.js:633:34)
+    at Object.apply (&lt;lab&gt;/node_modules/@deepseek-ai/cordis/lib/index.js:124:36)
+    at Proxy.execute (&lt;lab&gt;/node_modules/@deepseek-ai/dsh-tools/lib/index.js:643:15)
+    at Object.apply (&lt;lab&gt;/node_modules/@deepseek-ai/cordis/lib/index.js:124:36)
+    at &lt;lab&gt;/t07c/greet-tool.ts:28:36
+    at new apply (&lt;lab&gt;/t07c/greet-tool.ts:36:5)
+    at Fiber.execute (&lt;lab&gt;/node_modules/@deepseek-ai/cordis/lib/index.js:385:24)
+    at &lt;lab&gt;/node_modules/@deepseek-ai/cordis/lib/index.js:460:34
+    at composeError (&lt;lab&gt;/node_modules/@deepseek-ai/cordis/lib/index.js:207:18)
+    at Fiber._execute (&lt;lab&gt;/node_modules/@deepseek-ai/cordis/lib/index.js:455:10) {
+  code: 'TOOL_EXECUTOR_UNAVAILABLE'
+}
+
+Node.js v24.22.2
+exit=1</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>没有 executor，连 system prompt 都组装不了</h3>
+<p>更出人意料的是，<strong>没有 executor 时，<code>systemPrompt.assemble()</code> 也会失败</strong>。ToolsService 的构造函数向 systemPrompt 注册了一个 schema provider，它要先 <code>selectExecutor()</code> 再 <code>describe()</code>。所以“装了 tools 但没装 executor”的效果不是“工具看得见、调不了”，而是整个 agent 都组装不了 prompt。</p>
+<p>修正办法：组合里补上 <code>@deepseek-ai/dsh-session-projection</code> 和 <code>@deepseek-ai/dsh-tool-executor-native</code>（base bundle 本来就有这几行）；演示调用不要放在 <code>apply</code> 里。目前没有可以 inject 的“executor 就绪”服务。真实场景中调用来自 agent loop，那时 executor 早已就绪，所以这个问题只影响“在 apply 里自调工具”的写法。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/core/tools/src/index.ts:108-120">packages/core/tools/src/index.ts:108-120</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  private root: Registration | undefined
+  private readonly guards = new ScopedLayers(() =&gt; new GuardLayer(), () =&gt; {})
+
+  constructor(ctx: Context) {
+    super(ctx, 'tools')
+    ctx.systemPrompt.tools(({ scope, toolSet }) =&gt; {
+      const executor = this.selectExecutor(scope)
+      const description = executor.describe(this.definitions(scope, toolSet))
+      return { ...description, knownNames: description.knownNames ?? [...this.view(scope).knownNames] }
+    })
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验：只装 tools、不装 executor">实验：只装 tools、不装 executor</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>schemas(): [ 'noop' ]
+assemble -&gt; TOOL_EXECUTOR_UNAVAILABLE The selected tool executor is unavailable. Load an executor in this composition before running the agent.
+execute -&gt; TOOL_EXECUTOR_UNAVAILABLE</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>参数校验不在流水线前段</h3>
+<p>实验 D 还确认了一个写门禁时很重要的事实：<strong>参数校验在 <code>defineTool</code> 包装出的 <code>execute</code> 里</strong>，也就是图 2 的第三格。传入 <code>{"name":42}</code> 时，pre-execute 和 post-execute 监听器都执行了，最后才以 <code>ToolArgsError</code>（<code>INVALID_ARGS</code>）结束；JSON 解析失败的参数甚至会以原始字符串进入流水线。所以 <strong><code>tools/pre-execute</code> 监听器和 guard 不能假定参数已经通过校验</strong>。</p>
+<p>另外，<code>tools/result</code> 在 <code>execute</code> 返回的 promise 兑现<strong>之前</strong>发出，而且不会被 await，所以不能用它保证“审计写完再继续”。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="packages/core/tools/src/schema.ts:578-603">packages/core/tools/src/schema.ts:578-603</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">  const parameters = parameterSchemaSpecToJsonSchema(options.parameters)
+  const outputSchema = valueSchemaSpecToJsonSchema(options.output.schema)
+  const validate = (args: unknown): string[] =&gt; validateJsonSchemaValue(parameters, args, '')
+  const tool: ToolDefinition = {
+    name: options.name,
+    description: options.description,
+    parameters: parameters as unknown as Record&lt;string, unknown&gt;,
+    output: {
+      schema: outputSchema,
+      render(args: unknown, value: JsonValue): ContentBlock[] {
+        return userRender(args as InferArgs&lt;S&gt;, value as InferValue&lt;NoInfer&lt;O&gt;&gt;)
+      },
+      ...userPresentationMeta !== undefined ? {
+        presentationMeta(args: unknown, value: JsonValue): JsonValue {
+          return userPresentationMeta(args as InferArgs&lt;S&gt;, value as InferValue&lt;NoInfer&lt;O&gt;&gt;)
+        },
+      } : {},
+    },
+    ...(options.deferLoading === true ? { deferLoading: options.deferLoading } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    async execute(args: unknown, exec: ToolRunContext): Promise&lt;JsonValue&gt; {
+      const violations = validate(args)
+      if (violations.length &gt; 0) throw new ToolArgsError(violations)
+      return userExecute(args as InferArgs&lt;S&gt;, exec) as Promise&lt;JsonValue&gt;
+    },
+  }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>自写插件 acme-ledger：服务、事件和卸载顺序放在一起</h2>
+<div class="row row-only-text"><div class="row-text"><p>最后把前面的机制装进一个插件。acme-ledger 是一个审计账本：记录每次工具调用，定期写到文件。它由四个插件组成，跑在真实的 Cordis Loader 和真实的 <code>dsh-tools / system-prompt / session-projection / tool-executor-native</code> 包上；没有 LLM，模型的调用由脚本直接调 <code>root.tools.execute(...)</code> 代替。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>插件</th><th>角色</th><th>关键写法</th></tr></thead>
+  <tbody>
+    <tr><td><code>acme-ledger</code></td><td>提供 <code>acmeLedger</code> 服务，持有文件句柄和 flush 定时器</td><td>一个异步生成器 effect，<strong>最后才 <code>yield ctx.provide(...)</code></strong>；<code>tag</code> 字段标为 <code>.volatile()</code></td></tr>
+    <tr><td><code>acme-ledger-memory</code></td><td>同名服务的内存实现</td><td>演示更换提供方</td></tr>
+    <tr><td><code>acme-ledger-audit</code></td><td>消费方：监听 <code>tools/result</code> 记账，注册 <code>ledger_stats</code> 工具和一段 system prompt</td><td>顶层 <code>inject = ['tools','systemPrompt','acmeLedger']</code>；最后一条记录写在 async disposer 里</td></tr>
+    <tr><td><code>acme-ledger-tail</code></td><td>观察方：监听 <code>acme-ledger/flushed</code></td><td>没有顶层 inject，只用 <code>ctx.inject(['acmeLedger'], …)</code> 让 <code>watch</code> 这一部分等服务</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><h3>提供方：调用方署名、逐个隔离的事件、最后发布服务</h3>
+<p>四个设计选择分别对应前面各节。<strong>调用方归属</strong>：服务契约是一个抽象类，没有继承 <code>Service</code>，只在构造函数里装上 tracker，于是 <code>append()</code> 能用 <code>this.ctx.fiber.name</code> 给记录署名，<code>watch()</code> 用 <code>this.ctx.effect()</code> 把订阅登记在调用方身上。</p>
+<p><strong>事件隔离</strong>：<code>emitContained</code> 照搬 <code>tools/result</code> 的 <code>dispatch</code> 加逐个 try/catch。<strong>写入串行化</strong>：<code>flush()</code> 串在一条 promise 链上，撤服务时如果正有一次定时 flush 在进行，最终 flush 会排在它后面。</p>
+<p><strong>清理顺序</strong>：按上一篇推荐的生成器写法，资源先 <code>yield</code>、服务最后 <code>yield</code>。逆序回卷时依次是：撤下服务并等消费方卸载完、清除定时器、最终 flush、关闭文件。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="acme/acme-ledger.ts（实验所用源码）">acme/acme-ledger.ts（实验所用源码）</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">/**
+ * acme-ledger: file-backed provider of the `acmeLedger` service.
+ * Owns a FileHandle and a flush timer; publishes the service LAST inside one
+ * generator effect so reverse disposal is: withdraw service (wait for
+ * consumers) -&gt; stop timer -&gt; final flush -&gt; close file.
+ */
+import { open, type FileHandle } from 'node:fs/promises'
+import { Service, type Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
+import Schema from '@deepseek-ai/schemastery'
+import { log } from './log.ts'
+
+export interface LedgerEntry { kind: string; [key: string]: unknown }
+export interface FlushInfo { path: string; count: number; reason: string; owners: string[] }
+export interface LedgerStats { backend: string; path: string; appended: number; flushed: number; buffered: number; watchers: number }
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    acmeLedger: AcmeLedger
+  }
+  interface Events {
+    /** A batch was written to the backend. Listener failures are contained. @mode emit */
+    'acme-ledger/flushed'(info: FlushInfo): void
+  }
+}
+
+/** The service contract both providers implement. Not a Service subclass: published by ctx.provide(). */
+export abstract class AcmeLedger {
+  protected readonly ctx: Context
+  constructor(ctx: Context) {
+    this.ctx = ctx
+    // Same trick as dsh ui-conversation's ConversationDefinitionRegistry: let Cordis
+    // trace `this.ctx` to the CALLER's context when accessed as `ctx.acmeLedger`.
+    Object.defineProperty(this, Service.tracker, { value: { property: 'ctx' } })
+  }
+  protected readonly watchers = new Set&lt;(entry: LedgerEntry &amp; { owner: string }) =&gt; void&gt;()
+
+  /** Append one entry stamped with the calling plugin's name. */
+  append(entry: LedgerEntry): void {
+    const stamped = { ...entry, owner: this.ctx.fiber.name, tag: this.tag() }
+    this.write(stamped)
+    for (const watcher of this.watchers) {
+      try { watcher(stamped) } catch (error) { log(`[acme-ledger] watcher failed: ${(error as Error).message}`) }
+    }
+  }
+
+  /** Watch appends for the CALLER's lifetime; the disposer is an effect on the caller's fiber. */
+  watch(listener: (entry: LedgerEntry &amp; { owner: string }) =&gt; void): () =&gt; void {
+    const watchers = this.watchers
+    return this.ctx.effect(() =&gt; {
+      watchers.add(listener)
+      return () =&gt; { watchers.delete(listener) }
+    }, 'acmeLedger.watch()')
+  }
+
+  protected abstract tag(): string
+  protected abstract write(entry: LedgerEntry): void
+  abstract stats(): LedgerStats
+}
+
+export const name = 'acme-ledger'
+
+export interface Config { path: string; flushIntervalMs: number; tag: Schema.Volatile&lt;string&gt; }
+export const Config: Schema&lt;Config&gt; = Schema.object({
+  path: Schema.string().required().description('Append-only JSONL file. Changing it restarts the plugin.'),
+  flushIntervalMs: Schema.natural().default(50),
+  tag: Schema.string().default('v1').volatile().description('Stamped on each entry; changes apply in place.'),
+}) as any
+
+/** Emit with per-listener containment, the way dsh-tools notifies `tools/result`. */
+function emitContained(ctx: Context, name: 'acme-ledger/flushed', info: FlushInfo): void {
+  for (const callback of ctx.events.dispatch('emit', [name, info])) {
+    try {
+      const returned: unknown = callback(info)
+      void Promise.resolve(returned).catch((error: unknown) =&gt; log(`[acme-ledger] async listener failed: ${(error as Error).message}`))
+    } catch (error) {
+      log(`[acme-ledger] listener failed (contained): ${(error as Error).message}`)
+    }
+  }
+}
+
+class FileLedger extends AcmeLedger {
+  buffer: (LedgerEntry &amp; { owner: string })[] = []
+  appended = 0
+  flushed = 0
+  private chain: Promise&lt;void&gt; = Promise.resolve()
+  private readonly owner: Context
+  private readonly config: Config
+  private readonly handle: FileHandle
+  constructor(ctx: Context, owner: Context, config: Config, handle: FileHandle) {
+    super(ctx)
+    this.owner = owner
+    this.config = config
+    this.handle = handle
+  }
+  protected tag(): string { return this.config.tag.get() }
+  protected write(entry: LedgerEntry &amp; { owner: string }): void { this.appended++; this.buffer.push(entry) }
+  stats(): LedgerStats {
+    return { backend: 'file', path: this.config.path, appended: this.appended, flushed: this.flushed, buffered: this.buffer.length, watchers: this.watchers.size }
+  }
+  /** Serialized flush: an interval flush and the final flush never interleave. */
+  flush(reason: string): Promise&lt;void&gt; {
+    this.chain = this.chain.then(async () =&gt; {
+      if (this.buffer.length === 0) return
+      const batch = this.buffer.splice(0)
+      await this.handle.appendFile(batch.map(e =&gt; JSON.stringify(e)).join('\n') + '\n')
+      this.flushed += batch.length
+      emitContained(this.owner, 'acme-ledger/flushed', {
+        path: this.config.path, count: batch.length, reason, owners: [...new Set(batch.map(e =&gt; e.owner))],
+      })
+    })
+    return this.chain
+  }
+}
+
+export function apply(ctx: Context, config: Config): void {
+  log(`[acme-ledger] apply path=${config.path} tag=${config.tag.get()}`)
+  ctx.on('loader/volatile-update', (paths) =&gt; {
+    log(`[acme-ledger] volatile update ${JSON.stringify(paths)} -&gt; tag=${config.tag.get()} (no restart)`)
+  })
+  ctx.effect(async function* () {
+    // 1. Resource: the file handle. Disposed LAST.
+    const handle = await open(config.path, 'a')
+    yield async () =&gt; { await handle.close(); log(`[acme-ledger] file closed ${config.path}`) }
+
+    const ledger = new FileLedger(ctx, ctx, config, handle)
+    // 2. Final flush. Runs after the timer is gone and the service is withdrawn.
+    yield async () =&gt; { await ledger.flush('final'); log(`[acme-ledger] final flush done (appended=${ledger.appended}, flushed=${ledger.flushed})`) }
+
+    // 3. Timer. Cleared before the final flush.
+    const timer = setInterval(() =&gt; { void ledger.flush('interval') }, config.flushIntervalMs)
+    yield () =&gt; { clearInterval(timer); log('[acme-ledger] timer cleared') }
+
+    // 4. Publish LAST: reverse disposal withdraws it first and waits for dependents.
+    yield ctx.provide('acmeLedger', ledger)
+    log('[acme-ledger] service published')
+  }, 'acme-ledger:resources')
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>消费方和观察方</h3>
+<p>消费方 <code>acme-ledger-audit</code> 的每一项注册都是 effect：<code>ctx.on</code>、<code>ctx.tools.register</code>、<code>ctx.systemPrompt.section</code>，卸载时自动撤销，不用写任何清理代码。唯一手写的 effect 是最后一条记录：它是 async disposer，运行时提供方正停在“等 dependents 清空”那一步，所以服务仍然可用。</p>
+<p>section 的 <code>order</code> 选了 5100，因为 <code>getSectionOrder()</code> 只认内置名字，第三方目前没有官方区间，只能自己挑一个数。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="acme/acme-ledger-audit.ts">acme/acme-ledger-audit.ts</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">/**
+ * acme-ledger-audit: consumer. Records every tool result into the ledger,
+ * contributes a `ledger_stats` tool and a prompt section, and writes a final
+ * "closing" entry when it unloads (the write that must not be lost).
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import type {} from './acme-ledger.ts'
+import { log } from './log.ts'
+
+export const name = 'acme-ledger-audit'
+export const inject = ['tools', 'systemPrompt', 'acmeLedger']
+
+export function apply(ctx: Context): void {
+  // Captured once: a proxy whose `this.ctx` is THIS plugin's context.
+  const ledger = ctx.acmeLedger
+  log(`[audit] apply (backend=${ledger.stats().backend})`)
+  ledger.append({ kind: 'audit-start' })
+
+  ctx.on('tools/result', (exec, result) =&gt; {
+    ledger.append({ kind: 'tool', tool: exec.name, isError: result.isError })
+  })
+
+  ctx.tools.register(defineTool({
+    name: 'ledger_stats',
+    description: 'Report how many audit entries the ledger holds.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          backend: { type: 'string', required: true },
+          appended: { type: 'integer', required: true },
+          flushed: { type: 'integer', required: true },
+          buffered: { type: 'integer', required: true },
+        },
+      },
+      render: (_args, v) =&gt; [{ type: 'text', text: `${v.backend}: ${v.appended} appended, ${v.flushed} flushed, ${v.buffered} buffered` }],
+    },
+    async execute() {
+      const { backend, appended, flushed, buffered } = ledger.stats()
+      return { backend, appended, flushed, buffered }
+    },
+  }))
+
+  ctx.systemPrompt.section({
+    name: 'acme-ledger:audit',
+    order: 5100,
+    text: 'Every tool call in this deployment is recorded in an audit ledger; call ledger_stats to inspect it.',
+  })
+
+  // The final write. Async disposer: runs while the provider waits in its unprovide step.
+  ctx.effect(() =&gt; async () =&gt; {
+    await new Promise(r =&gt; setTimeout(r, 10))
+    try {
+      ledger.append({ kind: 'audit-closing' })
+      log('[audit] final entry appended')
+    } catch (error) {
+      log(`[audit] final entry FAILED: ${(error as Error).message}`)
+    }
+  }, 'audit:final-entry')
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>观察方 <code>acme-ledger-tail</code> 演示了两件事：事件监听不需要服务在场，所以它没有顶层 inject；<code>watch</code> 需要服务，就用 <code>ctx.inject</code> 开一个子 Fiber，只让这一部分随服务加载和卸载。<code>faulty: true</code> 时多挂一个会抛错的监听器，用来验证提供方的事件隔离。</p>
+<p>内存实现只有一个资源（内存里的记录），同样最后发布服务。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="acme/acme-ledger-tail.ts">acme/acme-ledger-tail.ts</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">/**
+ * acme-ledger-tail: observer. Hears `acme-ledger/flushed` with NO dependency on
+ * the service; only the optional `watch` part waits for `acmeLedger`.
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+import type {} from './acme-ledger.ts'
+import { log } from './log.ts'
+
+export const name = 'acme-ledger-tail'
+export interface Config { faulty: boolean }
+export const Config: Schema&lt;Config&gt; = Schema.object({ faulty: Schema.boolean().default(false) })
+
+export function apply(ctx: Context, config: Config): void {
+  if (config.faulty) {
+    ctx.on('acme-ledger/flushed', () =&gt; { throw new Error('tail listener bug') })
+  }
+  ctx.on('acme-ledger/flushed', (info) =&gt; {
+    log(`[tail] flushed ${info.count} (${info.reason}) from ${info.owners.join('+')} -&gt; ${info.path.split('/').pop()}`)
+  })
+  // Partial dependency: only this child fiber waits for / restarts with the provider.
+  ctx.inject(['acmeLedger'], (ctx) =&gt; {
+    ctx.acmeLedger.watch((entry) =&gt; {
+      if (entry.kind !== 'tool') log(`[tail] watch: ${entry.kind} by ${entry.owner} tag=${String(entry.tag)}`)
+    })
+  })
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="acme/acme-ledger-memory.ts">acme/acme-ledger-memory.ts</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">/** acme-ledger-memory: an alternative provider of the same `acmeLedger` service (no resources). */
+import type { Context } from '@deepseek-ai/cordis'
+import { AcmeLedger, type LedgerEntry, type LedgerStats } from './acme-ledger.ts'
+import { log } from './log.ts'
+
+class MemoryLedger extends AcmeLedger {
+  readonly entries: LedgerEntry[] = []
+  protected tag(): string { return 'mem' }
+  protected write(entry: LedgerEntry): void { this.entries.push(entry) }
+  stats(): LedgerStats {
+    return { backend: 'memory', path: '', appended: this.entries.length, flushed: 0, buffered: this.entries.length, watchers: this.watchers.size }
+  }
+}
+
+export const name = 'acme-ledger-memory'
+
+export function apply(ctx: Context): void {
+  ctx.effect(function* () {
+    const ledger = new MemoryLedger(ctx)
+    yield () =&gt; { log(`[acme-ledger-memory] dropped ${ledger.entries.length} in-memory entries: ${ledger.entries.map(e =&gt; e.kind).join(',')}`) }
+    yield ctx.provide('acmeLedger', ledger)
+    log('[acme-ledger-memory] service published')
+  }, 'acme-ledger-memory:resources')
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>装进组合</h3>
+<p>等价的 cordis.yml 如下。executor 行要在任何“apply 里自调工具”的插件之前就绪；本地调试一定加上 <code>cordis-plugin-logger-console</code>，否则 Loader 的错误只写进内存环形缓冲，你什么也看不到。</p>
+<p>实验本身用 <code>root.loader.create/update/remove</code> 程序化驱动，走的是真实的 <code>Entry.update → _commitVolatile</code> 路径，<strong>没有用这份 YAML 直接运行过</strong>。插件以 <code>.ts</code> 形式靠 Node 24 的类型剥离直接运行，没有经过 <code>tsc</code> 类型检查。第一次运行时提供方用了 TS 的 parameter property 语法，strip-only 模式不支持，导入失败，唯一的表现是 <code>ledger=none</code>，挂上 logger-console 才看到报错。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="cordis.yml（等价组合，未直接运行）">cordis.yml（等价组合，未直接运行）</span><span class="panel-lang">YAML</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-yaml">- name: '@deepseek-ai/cordis-plugin-logger-console'
+- name: '@deepseek-ai/dsh-session-projection'
+- name: '@deepseek-ai/dsh-system-prompt'
+- name: '@deepseek-ai/dsh-tools'
+- name: '@deepseek-ai/dsh-tool-executor-native'
+- id: acme-ledger
+  name: './acme/acme-ledger.ts'
+  config: { path: ./ledger.jsonl, flushIntervalMs: 50, tag: v1 }
+- id: acme-ledger-audit
+  name: './acme/acme-ledger-audit.ts'
+- id: acme-ledger-tail
+  name: './acme/acme-ledger-tail.ts'
+  config: { faulty: true }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>运行记录：三种卸载路径下最后一条记录都没丢</h3>
+<p>驱动脚本分 8 步，第一列是相对毫秒：</p>
+<ul>
+  <li><strong>1–3 启动</strong>：先装消费方，audit 停在 PENDING；harness 就绪后仍等服务；提供方一到，audit 立刻激活，它注册的工具和 section 同时出现</li>
+  <li><strong>4 事件</strong>：抛错的 tail 监听器被隔离（<code>listener failed (contained)</code>），正常的监听器照常收到</li>
+  <li><strong>5 volatile</strong>：只改 <code>tag</code>，<code>same fiber object: true</code>，之后的记录 tag 变成 <code>v2</code></li>
+  <li><strong>6 改 path</strong>：提供方重启。<code>[audit] final entry appended</code> 在 <code>timer cleared</code> 和 <code>file closed</code> <strong>之前</strong></li>
+  <li><strong>7 换实现</strong>：卸文件版、装内存版，file B 里有 <code>audit-closing</code></li>
+  <li><strong>8 整树 dispose</strong>：最后一条照样写进文件，<code>Timeout</code> 从活跃资源里消失，没有残留句柄</li>
+</ul>
+<p><code>ledger_stats</code> 第一次返回 <code>2 appended</code>，第二次 <code>3 appended</code>：工具自己那次调用的 <code>tools/result</code> 要等它返回之后才入账。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验：acme-ledger 8 步运行记录">实验：acme-ledger 8 步运行记录</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>    4 === 1. consumers first, no provider
+   74 tail=ACTIVE audit=PENDING
+   74 === 2. harness rows (session-projection, system-prompt, tools, native executor, greet)
+tool replied: [{"type":"text","text":"Hello, Cordis!"}]
+  218 tools=ACTIVE executor=ACTIVE audit=PENDING (audit still waits for acmeLedger)
+  218 === 3. provider arrives
+  223 [acme-ledger] apply path=/tmp/acme-ledger-FV3oBY/a.jsonl tag=v1
+  224 [audit] apply (backend=file)
+  224 [tail] watch: audit-start by acme-ledger-audit tag=v1
+  225 [acme-ledger] service published
+  274 ledger=ACTIVE audit=ACTIVE tail=ACTIVE
+  275 tools visible: greet,ledger_stats
+  276 prompt sections: harness:identity,deployment:persona-prefix,acme-ledger:audit,deployment:persona-suffix
+  276 === 4. tool calls flow into the ledger; flush events reach tail (one tail listener throws)
+  276 greet -&gt; Hello, Ledger!
+  277 ledger_stats -&gt; file: 2 appended, 0 flushed, 2 buffered
+  277 [acme-ledger] listener failed (contained): tail listener bug
+  277 [tail] flushed 3 (interval) from acme-ledger-audit -&gt; a.jsonl
+  399 ledger_stats -&gt; file: 3 appended, 3 flushed, 0 buffered
+  399 === 5. volatile config update (tag only)
+  401 [acme-ledger] volatile update [["tag"]] -&gt; tag=v2 (no restart)
+  401 same fiber object: true ledger=ACTIVE audit=ACTIVE
+  437 [acme-ledger] listener failed (contained): tail listener bug
+  437 [tail] flushed 2 (interval) from acme-ledger-audit -&gt; a.jsonl
+  503 === 6. ordinary config update (path A -&gt; B): provider restarts, consumer restarts
+  517 [audit] final entry appended
+  519 [acme-ledger] timer cleared
+  520 [acme-ledger] listener failed (contained): tail listener bug
+  521 [tail] flushed 1 (final) from acme-ledger-audit -&gt; a.jsonl
+  521 [acme-ledger] final flush done (appended=6, flushed=6)
+  521 [acme-ledger] file closed /tmp/acme-ledger-FV3oBY/a.jsonl
+  522 [acme-ledger] apply path=/tmp/acme-ledger-FV3oBY/b.jsonl tag=v2
+  525 [audit] apply (backend=file)
+  525 [tail] watch: audit-start by acme-ledger-audit tag=v2
+  526 [acme-ledger] service published
+  577 [acme-ledger] listener failed (contained): tail listener bug
+  577 [tail] flushed 1 (interval) from acme-ledger-audit -&gt; b.jsonl
+  608 ledger=ACTIVE audit=ACTIVE tail=ACTIVE
+  630 [acme-ledger] listener failed (contained): tail listener bug
+  630 [tail] flushed 1 (interval) from acme-ledger-audit -&gt; b.jsonl
+  715 file A: audit-start@acme-ledger-audit/v1 | tool:greet@acme-ledger-audit/v1 | tool:ledger_stats@acme-ledger-audit/v1 | tool:ledger_stats@acme-ledger-audit/v1 | tool:greet@acme-ledger-audit/v2 | audit-closing@acme-ledger-audit/v2
+  717 file B: audit-start@acme-ledger-audit/v2 | tool:greet@acme-ledger-audit/v2
+  717 === 7. provider swap: unload file provider, load memory provider
+  729 [audit] final entry appended
+  730 [acme-ledger] timer cleared
+  730 [acme-ledger] listener failed (contained): tail listener bug
+  730 [tail] flushed 1 (final) from acme-ledger-audit -&gt; b.jsonl
+  730 [acme-ledger] final flush done (appended=3, flushed=3)
+  730 [acme-ledger] file closed /tmp/acme-ledger-FV3oBY/b.jsonl
+  731 audit=PENDING after file provider removed
+  731 file B: audit-start@acme-ledger-audit/v2 | tool:greet@acme-ledger-audit/v2 | audit-closing@acme-ledger-audit/v2
+  735 [acme-ledger-memory] service published
+  736 [audit] apply (backend=memory)
+  736 [tail] watch: audit-start by acme-ledger-audit tag=mem
+  787 memory=ACTIVE audit=ACTIVE
+  790 ledger_stats -&gt; memory: 1 appended, 0 flushed, 1 buffered
+  801 [audit] final entry appended
+  802 [acme-ledger-memory] dropped 3 in-memory entries: audit-start,tool,audit-closing
+  803 audit=PENDING
+  803 === 8. full dispose (dispose the Loader fiber that owns every entry)
+  805 [acme-ledger] apply path=/tmp/acme-ledger-FV3oBY/b.jsonl tag=v3
+  806 [audit] apply (backend=file)
+  806 [tail] watch: audit-start by acme-ledger-audit tag=v3
+  807 [acme-ledger] service published
+  856 ledger2=ACTIVE audit=ACTIVE
+  871 [audit] final entry appended
+  873 [acme-ledger] timer cleared
+  874 [acme-ledger] final flush done (appended=2, flushed=2)
+  874 [acme-ledger] file closed /tmp/acme-ledger-FV3oBY/b.jsonl
+  926 active resources before: ["PipeWrap","Timeout"]
+  927 active resources after : ["PipeWrap"]
+  928 file B: audit-start@acme-ledger-audit/v2 | tool:greet@acme-ledger-audit/v2 | audit-closing@acme-ledger-audit/v2 | audit-start@acme-ledger-audit/v3 | audit-closing@acme-ledger-audit/v3
+  928 done</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>另一个实验直接核对归属。audit 的 <code>fiber.getEffects()</code> 列出了它的四项注册，卸载后 <code>ledger_stats</code> 和 section 都消失了；tail 的 <code>watch</code> 订阅落在 <code>ctx.inject</code> 建的子 Fiber（<code>ctx.plugin()</code>）上，tail 卸载后 watchers 从 1 变成 0；从 root 调 <code>append()</code> 时署名是 <code>root</code>。</p>
+<blockquote><p>这里有一个不能外推的边界：本实验的消费方清理只花了 10ms。上一篇引用的官方审计规则指出，外层整体卸载时“最后 provide”的写法不是完整修复；耗时更长的清理、多个消费方并发卸载时的表现没有测试过。</p></blockquote></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="实验：effect 归属与卸载后的注册表">实验：effect 归属与卸载后的注册表</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>    5 [acme-ledger] apply path=/tmp/acme-cc-vDEmnx/x.jsonl tag=v1
+    7 [audit] apply (backend=file)
+    9 [acme-ledger] service published
+audit fiber effects: ["ctx.on(\"tools/result\")","tools.register()","systemPrompt.section()","audit:final-entry"]
+tail fiber effects : ["ctx.on(\"acme-ledger/flushed\")","ctx.plugin()"]
+watchers before tail dispose: 1
+   61 [tail] watch: from-root by root tag=v1
+watchers after tail dispose : 0
+tools before audit dispose: [ 'ledger_stats' ]
+   73 [audit] final entry appended
+tools after audit dispose : []
+sections after audit dispose: harness:identity,deployment:persona-prefix,deployment:persona-suffix
+   74 [acme-ledger] timer cleared
+   74 [acme-ledger] final flush done (appended=3, flushed=3)
+   74 [acme-ledger] file closed /tmp/acme-cc-vDEmnx/x.jsonl</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>坑点清单：28 条，按出现顺序</h2>
+<div class="row row-only-text"><div class="row-text"><p>前面各节的结论汇总成一张表，写插件和排查问题时可以直接对照。“依据”一列是仓库路径（相对 dsh 根目录）或本文的实验编号。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>#</th><th>症状</th><th>原因</th><th>对策</th><th>依据</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>cannot get property "x" without inject</code></td><td>有 runtime 的插件读服务必须先声明</td><td>硬依赖写 <code>inject</code>，可选依赖用 <code>ctx.get</code> 加 <code>ctx.inject</code></td><td><code>reflect.ts:185-202</code>；实验 1</td></tr>
+    <tr><td>2</td><td>第二个提供方 FAILED，旧的卸载后也不接班</td><td>同一隔离域只能有一个实现，FAILED 不自愈</td><td>先卸旧再装新；需要并存就用 <code>isolate</code></td><td><code>reflect.ts:324-327</code>、<code>fiber.ts:655-656</code>；实验 1</td></tr>
+    <tr><td>3</td><td>调用方卸载后，注册还留在服务里</td><td>服务方法用了构造时存下的 ctx，或没登记成 effect</td><td>方法里始终用 <code>this.ctx.effect(...)</code>，返回 disposer</td><td>实验 3、4；<code>store.ts:219-262</code></td></tr>
+    <tr><td>4</td><td>解构服务方法后 <code>TypeError</code></td><td>只有 <code>thisArg === receiver</code> 时才替换成 shadow</td><td>始终写 <code>ctx.svc.method()</code></td><td><code>utils.ts:161-168</code>；实验 4</td></tr>
+    <tr><td>5</td><td>改了内部状态，消费方仍 PENDING</td><td><code>[Service.check]</code> 是拉模式</td><td>状态变化后 <code>ctx.reflect.notify([name])</code></td><td>实验 2、5</td></tr>
+    <tr><td>6</td><td><code>ctx.get</code> 在 apply 或 init 期间返回 <code>undefined</code></td><td>默认严格模式，只认 ACTIVE 提供方</td><td>需要时用 <code>ctx.get(name, false)</code>；不要长期持有返回值</td><td><code>reflect.ts:269-279</code>；实验 6</td></tr>
+    <tr><td>7</td><td>一个监听器抛错，后面全没执行，异常抛到发出方</td><td><code>emit</code> 不隔离</td><td>发通知用 <code>events.dispatch('emit', …)</code> 逐个 try/catch</td><td><code>events.ts:207-210</code>；实验 04</td></tr>
+    <tr><td>8</td><td>async 监听器的 reject 变成 <code>unhandledRejection</code></td><td><code>emit</code> 丢弃返回的 promise</td><td>同上，对返回值 <code>.catch</code></td><td>实验 04</td></tr>
+    <tr><td>9</td><td>waterfall 下游默认行为消失，或调用方拿到 <code>undefined</code></td><td>没调 <code>next()</code>，或调了没 <code>return</code></td><td>观察型监听器写成 <code>return await next()</code>；<code>next</code> 只调一次</td><td><code>events.ts:250-265</code>；实验 03</td></tr>
+    <tr><td>10</td><td><code>serial</code>/<code>bail</code> 返回 <code>0</code> 或 <code>''</code> 时停了；<code>bail</code> 遇到 async 监听器总是短路</td><td><code>isBailed</code> 只放行 <code>null/false/undefined</code></td><td>数值结果不要用 bail 类模式</td><td><code>events.ts:12-14</code>；实验 02</td></tr>
+    <tr><td>11</td><td>监听器顺序和预期不一样</td><td>只有注册顺序加 <code>prepend</code>，其他插件可以插到前面</td><td>确定性策略写在服务代码路径里，或用 <code>tools.guard()</code></td><td><code>user-approval/src/index.ts:297-302</code></td></tr>
+    <tr><td>12</td><td><code>ctx.on('turn/start')</code> 从不触发</td><td>它是会话事件类型，不是 Cordis 事件</td><td>监听 <code>session/event</code> 再判断 <code>event.type</code></td><td><code>events.zh.md:104-106</code></td></tr>
+    <tr><td>13</td><td>门禁拿到的参数类型不对，甚至是字符串</td><td>参数校验在工具主体里，晚于 pre-execute 和 guard</td><td>门禁自己做防御性检查</td><td><code>schema.ts:578-603</code>、<code>batch.ts:98-105</code></td></tr>
+    <tr><td>14</td><td>Config 被忽略，apply 收到 <code>undefined</code></td><td><code>export default function</code> 搭配具名 <code>Config</code></td><td>只用具名导出，或 default 导出带 <code>static Config</code> 的类</td><td><code>loader/src/index.ts:232</code>；实验 E1</td></tr>
+    <tr><td>15</td><td>用户覆盖一个字段后，其他 config 字段消失</td><td>patch 按 id 整块替换 <code>config</code></td><td>默认值写在 schema 的 <code>.default()</code> 里</td><td><code>patch.ts:165-169</code>；实验 E5</td></tr>
+    <tr><td>16</td><td>改了 volatile 字段，插件却重启了</td><td>同次编辑还改了别的键或普通字段，或 Fiber 不是 ACTIVE</td><td>单独改 volatile；值用 <code>.get()</code> 现读</td><td><code>entry.ts:155-211</code>；实验 E2</td></tr>
+    <tr><td>17</td><td>volatile 非法值只 warn，下次启动却 FAILED</td><td>非法值已写回磁盘</td><td>改配置后检查日志</td><td>实验 E3</td></tr>
+    <tr><td>18</td><td><code>disabled: !!js</code> 在环境变化后不生效</td><td>只在树协调时求值，文件没变就不协调</td><td>改文件或手动触发协调</td><td><code>include/src/index.ts:411</code>；实验 E2</td></tr>
+    <tr><td>19</td><td>yml 里的插件永久 PENDING，没有提示</td><td>条目 <code>inject</code> 叠加到插件 inject 上（例如笔误）</td><td>用 <code>captureStartupComposition</code> 或遍历 registry 查缺失服务</td><td><code>loader/src/index.ts:149-155</code>；实验 E3</td></tr>
+    <tr><td>20</td><td>插件自释放后，文件里多了 <code>disabled: true</code></td><td>Loader 把自释放写回用户文件</td><td>需要暂时停止时不要调 <code>ctx.fiber.dispose()</code></td><td><code>loader/src/index.ts:157-195</code></td></tr>
+    <tr><td>21</td><td>匿名行改了自身配置就重建</td><td>没有 id，按内容匹配失败后换新 id</td><td>每行写显式 <code>id</code></td><td><code>include/src/index.ts:615-662</code>；实验 E2</td></tr>
+    <tr><td>22</td><td>改代码没反应</td><td>默认 <code>root: []</code>；没有 timer 或 <code>--expose-internals</code>；新建文件不触发；<code>node_modules</code> 不参与</td><td>开启 root，挂上 timer，保存已加载的那个文件</td><td><code>hmr/src/index.ts:211-226, 436-489</code>；实验 E4</td></tr>
+    <tr><td>23</td><td>HMR 后定时器或连接翻倍</td><td>模块顶层副作用不会随逐出清理</td><td>所有副作用放进 <code>apply</code> 或 <code>ctx.effect</code></td><td>上一篇“模块级状态”</td></tr>
+    <tr><td>24</td><td>按教程 07 运行没有输出，exit 0</td><td>缺 <code>dsh-session-projection</code>，整条链 PENDING</td><td>补上该行</td><td>实验 A</td></tr>
+    <tr><td>25</td><td><code>TOOL_EXECUTOR_UNAVAILABLE</code>（execute 或 assemble 时）</td><td>没有 executor，或 executor 比调用方晚激活</td><td>组合里加 <code>dsh-tool-executor-native</code>；不要在 apply 里自调工具</td><td><code>tools/src/index.ts:111-118, 353-378</code>；实验 B、C</td></tr>
+    <tr><td>26</td><td>本地 <code>.ts</code> 插件被静默跳过</td><td>strip-only 不支持某些 TS 语法；没有 logger 看不到错误</td><td>挂上 <code>cordis-plugin-logger-console</code>；避免 parameter property</td><td><code>logger.ts:212-224</code>；acme 首次运行</td></tr>
+    <tr><td>27</td><td>消费方最后一次写入失败</td><td>资源 effect 和服务发布是并发执行的兄弟 effect</td><td>一个生成器 effect，服务最后 <code>yield ctx.provide</code></td><td>上一篇竞态一节；acme 运行记录</td></tr>
+    <tr><td>28</td><td>第三方 section 位置不好控制</td><td><code>getSectionOrder()</code> 只认内置名字</td><td>自选数字（本文用 5100），目前没有官方区间</td><td><code>system-prompt/src/index.ts:191-231</code></td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><p>读完源码再看 dsh 的插件模型，最值得记住的是<strong>归属</strong>的算法：一个注册属于谁，由“哪个 context 调用了这个方法”决定，和注册代码写在哪个类里无关。只要服务方法通过 tracker 拿到调用方 ctx，并把修改包进 <code>this.ctx.effect</code>，“插件卸载即撤销”就是白送的。配置重启、HMR 替换、换提供方，最后都归结为同一个动作：卸载再加载。</p>
+<p>反过来，dsh 在 Cordis 之上补的东西，几乎都在填这份“白送”覆盖不到的地方：<code>events.dispatch</code> 加逐个隔离、作用域 carrier、“最后 provide”的约定、启动组合诊断。<strong>错误隔离和启动顺序是插件作者自己的责任</strong>。教程 07 跑不通也说明，dsh 有不少依赖没写进 <code>inject</code>，只体现在 base bundle 的行顺序里。第三方插件最稳的做法是叠加在 base bundle 上，而不是从零拼组合。</p></div><div class="row-media"></div></div>
+</section>
+  </main>
+  <footer class="foot">来源：github.com/deepseek-ai/deepseek-harness（commit 4b399c3）的 vendor/cordis、vendor/loader、vendor/include、packages/core/tools、packages/boot/hmr、packages/boot/app-boot、docs/cordis-tutorial（03–07）。标注仓库路径的代码按行号原样摘录；标注“实验”的脚本和输出来自本文编写的实验，运行在与仓库同版本的 npm 包上（dsh-tools 的源码与仓库逐字节一致），临时目录路径替换成了 &amp;lt;lab&amp;gt;，毫秒数每次运行略有出入。</footer>
+</div>
+<dialog class="panel panel-diagram zoom-dialog" aria-labelledby="zoom-title">
+  <div class="panel-head"><span class="panel-title" id="zoom-title"></span><button type="button" class="panel-btn" data-zoom-close>关闭</button></div>
+  <div class="panel-body"></div>
+</dialog>
+<div class="sr-only" role="status" data-status></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function () {
+  var root = document.documentElement;
+  // theme
+  var tg = document.querySelector('[data-theme-toggle]');
+  if (tg) tg.addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('tech-article-theme', next); } catch (e) {}
+  });
+
+  // heading ids + anchors
+  var used = {};
+  function slug(t) {
+    var s = t.trim().toLowerCase().replace(/[\s　]+/g, '-').replace(/[^\p{L}\p{N}\-_]/gu, '').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'section';
+    var b = s, i = 2; while (used[s]) s = b + '-' + i++; used[s] = 1; return s;
+  }
+  var heads = Array.prototype.slice.call(document.querySelectorAll('.content h2, .content h3'));
+  var labels = heads.map(function (h) { return h.textContent.trim(); });
+  heads.forEach(function (h, i) {
+    h.id = h.id || slug(labels[i]);
+    var a = document.createElement('a'); a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#'; a.setAttribute('aria-label', '链接到本节');
+    h.appendChild(a);
+  });
+
+  // reading time + section count
+  var content = document.querySelector('.content');
+  var text = content.innerText || '';
+  var cjk = (text.match(/[㐀-鿿]/g) || []).length;
+  var words = (text.replace(/[㐀-鿿]/g, ' ').match(/[A-Za-z0-9_]+/g) || []).length;
+  var rt = document.querySelector('[data-reading-time]');
+  var preset = null;
+  try { preset = JSON.parse(document.getElementById('article-meta').textContent).minutes; } catch (e) {}
+  if (rt) rt.textContent = '约 ' + (preset || Math.max(1, Math.round(cjk / 400 + words / 220))) + ' 分钟';
+  var sc = document.querySelector('[data-sections]');
+  var nsec = document.querySelectorAll('.content .sec > h2').length;
+  if (sc) sc.textContent = nsec + ' 个章节';
+  if (content) content.style.setProperty('--sec-of', '" / ' + (nsec < 10 ? '0' : '') + nsec + '"');
+
+  // tables scroll inside a frame
+  content.querySelectorAll('table').forEach(function (t) {
+    var w = document.createElement('div'); w.className = 'table-wrap';
+    t.parentNode.insertBefore(w, t); w.appendChild(t);
+  });
+
+  // panels: copy, expand, zoom
+  var status = document.querySelector('[data-status]'), dlg = document.querySelector('.zoom-dialog');
+  document.querySelectorAll('.panel').forEach(function (p) {
+    var body = p.querySelector('.panel-body'), more = p.querySelector('[data-expand]');
+    // a code panel that scrolls needs a keyboard stop, or its hidden lines are pointer-only
+    if (p.querySelector('pre') && (body.scrollWidth > body.clientWidth || body.scrollHeight > body.clientHeight)) {
+      body.tabIndex = 0; body.setAttribute('role', 'region');
+      body.setAttribute('aria-label', p.querySelector('.panel-title').textContent);
+    }
+    if (more && body.scrollHeight > body.clientHeight + 8) {
+      p.classList.add('is-collapsible');
+      more.hidden = false;
+      more.addEventListener('click', function () {
+        var on = p.classList.toggle('expanded');
+        more.textContent = on ? '收起' : '展开全部';
+        if (!on) p.scrollIntoView({ block: 'nearest' });
+      });
+    }
+    var copy = p.querySelector('[data-copy]');
+    if (copy) copy.addEventListener('click', function () {
+      var txt = p.querySelector('pre').innerText;
+      var report = function (ok) {
+        var msg = ok ? '已复制' : '复制失败，请手动选中复制';
+        copy.textContent = msg; status.textContent = msg;
+        setTimeout(function () { copy.textContent = '复制'; }, ok ? 1400 : 4000);
+      };
+      var legacy = function () {
+        var ta = document.createElement('textarea'), ok = false;
+        ta.value = txt; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        ta.remove(); copy.focus(); return ok;
+      };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(function () { report(true); }, function () { report(legacy()); });
+      else report(legacy());
+    });
+    var zoom = p.querySelector('[data-zoom]');
+    if (zoom) {
+      // cap figures near their drawn size (at least 760px): scaled-up labels outgrow the body text
+      var art = body.querySelector('svg, img');
+      var nat = art && (art.tagName === 'IMG' ? art.naturalWidth || +art.getAttribute('width')
+        : +art.getAttribute('width') || (art.viewBox && art.viewBox.baseVal && art.viewBox.baseVal.width));
+      if (nat > 0) art.style.maxWidth = Math.max(nat, 760) + 'px';
+      var open = function () {
+        dlg.className = 'panel panel-diagram zoom-dialog ' + (p.classList.contains('dark') ? 'dark' : 'light');
+        dlg.querySelector('.panel-title').textContent = p.querySelector('.panel-title').textContent;
+        dlg.querySelector('.panel-body').innerHTML = body.innerHTML;
+        dlg.showModal();
+      };
+      zoom.addEventListener('click', open);
+      body.addEventListener('click', open);
+    }
+  });
+  dlg.querySelector('[data-zoom-close]').addEventListener('click', function () { dlg.close(); });
+  dlg.querySelector('.panel-body').addEventListener('click', function () { dlg.close(); });
+
+  // syntax colours for plain code blocks
+  if (window.hljs) document.querySelectorAll('.panel-code code[class^="language-"]').forEach(function (el) {
+    try { window.hljs.highlightElement(el); } catch (e) {}
+  });
+
+  // sidebar table of contents, collapsible
+  var root = document.documentElement, list = document.querySelector('.toc-list'), tog = document.querySelector('.toc-toggle');
+  var narrow = matchMedia('(max-width: 1100px)');
+  var secNo = 0, subNo = 0, nums = heads.map(function (h) {
+    if (h.tagName === 'H2') { subNo = 0; return ('0' + (++secNo)).slice(-2); }
+    return ('0' + secNo).slice(-2) + '.' + (++subNo);
+  });
+  var tt = document.querySelector('[data-toc-title]'), h1 = document.querySelector('h1');
+  if (tt && h1) tt.textContent = h1.textContent.trim();
+  var secOf = [], lis = [], cur = -1;
+  var links = heads.map(function (h, i) {
+    var li = document.createElement('li'), a = document.createElement('a'), n = document.createElement('span'), t = document.createElement('span');
+    a.href = '#' + h.id; a.className = h.tagName === 'H3' ? 'lv3' : 'lv2';
+    if (h.tagName === 'H2') cur = i; else li.className = 'sub';
+    secOf.push(cur); lis.push(li);
+    n.className = 'num'; n.textContent = nums[i]; t.textContent = labels[i];
+    a.appendChild(n); a.appendChild(t); li.appendChild(a); list.appendChild(li);
+    a.addEventListener('click', function () { if (narrow.matches) setToc(false, false); });
+    return a;
+  });
+  function setToc(open, remember) {
+    root.setAttribute('data-toc', open ? 'open' : 'closed');
+    tog.setAttribute('aria-expanded', open ? 'true' : 'false');
+    tog.textContent = open ? '收起目录' : '☰ 目录';
+    if (remember) try { localStorage.setItem('tech-article-toc', open ? 'open' : 'closed'); } catch (e) {}
+  }
+  setToc(root.getAttribute('data-toc') !== 'closed', false);
+  tog.addEventListener('click', function () { setToc(root.getAttribute('data-toc') === 'closed', !narrow.matches); });
+  addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && narrow.matches && root.getAttribute('data-toc') === 'open') { setToc(false, false); tog.focus(); }
+  });
+  var bar = document.querySelector('.progress');
+  function onScroll() {
+    var y = innerHeight * 0.25, act = 0;
+    heads.forEach(function (h, i) { if (h.getBoundingClientRect().top < y) act = i; });
+    var sec = secOf[act];
+    links.forEach(function (a, i) {
+      var on = i === act;
+      lis[i].classList.toggle('in-sec', secOf[i] === sec && sec >= 0);
+      a.classList.toggle('is-sec', i === sec);
+      if (on && !a.classList.contains('is-active') && root.getAttribute('data-toc') === 'open') {
+        var box = list.parentElement, r = a.getBoundingClientRect(), br = box.getBoundingClientRect();
+        if (r.top < br.top + 48 || r.bottom > br.bottom - 24) box.scrollTop += r.top - br.top - box.clientHeight / 3;
+      }
+      a.classList.toggle('is-active', on);
+      if (on) a.setAttribute('aria-current', 'location'); else a.removeAttribute('aria-current');
+    });
+    var max = document.documentElement.scrollHeight - innerHeight;
+    bar.style.transform = 'scaleX(' + (max > 0 ? scrollY / max : 0) + ')';
+  }
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+})();
+</script>
+</body>
+</html>

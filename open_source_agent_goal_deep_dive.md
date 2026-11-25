@@ -8,6 +8,7 @@ meta:
 footer: 源码出处：openai/codex@4389a52、QwenLM/qwen-code@3d75b8e、NousResearch/hermes-agent@09ded63、OpenHands/software-agent-sdk（main）、anomalyco/opencode@79bd2c6、code-yeongyu/oh-my-openagent@544c0a4、Kilo-Org/kilocode@46e4dd4、anthropics/claude-plugins-official（main）、Yeachan-Heo/oh-my-claudecode（main）、aaif-goose/goose@927005e、cline/plugins（main）、snarktank/ralph@6c53cb0、HKUDS/DeepCode（main）。Claude Code 内置 /goal 闭源，仅依据官方文档。源码只读未运行，标注“推断”处未经代码逐行验证。
 index: index.html
 updated: 2026-11-18
+created: 2026-11-18
 ---
 
 给 Agent 一个目标，让它自己一轮接一轮地干，直到真的做完才停。2026 年几乎每个开源编码 Agent 都做了这件事，叫法各不相同：Codex、Qwen、Hermes、OpenHands、opencode、Kilo、Goose 叫 `/goal`，Claude Code 生态叫 ralph loop，Goose 还有一个 `/grind`。本文逐个拆开这些实现，摘出发给模型的 prompt 原文和源码，画出各自的状态机，最后放在一起比较：下一轮从哪来、谁说了算、怎么防止它停不下来。

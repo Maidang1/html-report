@@ -10,6 +10,7 @@ meta:
 footer: 文中代码均为示意，用于说明各层的形态；API 名称参考 Virtualization.framework、QEMU、nftables、mitmproxy 的公开文档。写于 2026 年 11 月。
 index: index.html
 updated: 2026-11-19
+created: 2026-11-19
 ---
 
 这篇设计指南写给对虚拟化完全不熟、之后打算让 AI 写代码的人。要做的系统是一个给 AI agent 分配“电脑”的平台：每个任务拿到一台独立的 macOS 或 Linux 虚拟机，agent 能看屏幕、点鼠标、敲键盘、跑命令，而它的每一次联网都在你的控制之下；任务结束，机器就销毁。

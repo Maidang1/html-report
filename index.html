@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>技术文章</title>
-<meta name="description" content="8 篇技术文章的目录">
+<meta name="description" content="10 篇技术文章的目录">
 <script>(function(){try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
 <style>
 :root {
   --bg: #f5f4ed; --surface: #faf9f5; --sunken: #f0eee6;
-  --ink: #141413; --ink-2: #3d3d3a; --muted: #504e49; --faint: #6b6a64;
+  --ink: #141413; --ink-2: #2c2c29; --muted: #504e49; --faint: #6b6a64;
   --line: #e8e6dc; --line-strong: #d8d5c8;
   --accent: #1B365D; --accent-soft: #EEF2F7;
   --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 8px 24px rgb(20 20 19 / 0.05);
@@ -21,7 +21,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
-    --ink: #f2f0ea; --ink-2: #dad6ca; --muted: #a8a49a; --faint: #7a776e;
+    --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e;
     --line: #2e2d2a; --line-strong: #403f3c;
     --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
     --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
@@ -30,7 +30,7 @@
 }
 :root[data-theme="dark"] {
   --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
-  --ink: #f2f0ea; --ink-2: #dad6ca; --muted: #a8a49a; --faint: #7a776e;
+  --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e;
   --line: #2e2d2a; --line-strong: #403f3c;
   --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
   --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
@@ -41,8 +41,8 @@ html { scroll-padding-top: 96px; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 code { font-family: var(--mono); font-size: 0.9em; }
-.page { max-width: 1440px; margin: 0 auto; padding: 0 56px 96px; }
-.masthead { padding: 56px 0 28px; }
+.page { max-width: 1120px; margin: 0 auto; padding: 0 56px 96px; }
+.masthead { padding: 64px 0 40px; }
 .masthead-top { display: flex; justify-content: space-between; align-items: center; }
 .kicker { margin: 0; font: 600 0.75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
 .theme-toggle {
@@ -51,56 +51,74 @@ code { font-family: var(--mono); font-size: 0.9em; }
   color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
 }
 .theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); }
-h1 { margin: 18px 0 8px; font-size: clamp(1.75rem, 3vw, 2.5rem); line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
-.summary { margin: 0; color: var(--muted); font-size: 0.9375rem; }
+h1 { margin: 20px 0 10px; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; }
+.summary { margin: 0; color: var(--muted); font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
 
 .toolbar {
   position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
-  margin: 0 -56px 28px; padding: 14px 56px; background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(8px); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  margin: 0 0 8px; padding: 14px 0; background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--ink);
 }
 .search {
-  flex: 1 1 280px; max-width: 440px; height: 38px; padding: 0 14px;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  flex: 1 1 240px; max-width: 320px; height: 36px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
   color: var(--ink); font: 0.875rem var(--sans); outline: none;
 }
 .search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag {
-  height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
-  background: var(--surface); color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+  height: 30px; padding: 0 12px; border: 1px solid transparent; border-radius: 999px;
+  background: none; color: var(--muted); font: 0.84375rem var(--sans); cursor: pointer;
 }
 @media (hover: hover) { .tag:hover { color: var(--ink); } }
-.tag[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.tag[aria-pressed="true"]::before { content: "✓ "; }
+.tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag[aria-pressed="true"] { background: var(--ink); color: var(--bg); font-weight: 600; }
 .sort { margin-left: auto; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-2); font: 0.8125rem var(--sans); }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 18px; }
+.grid { display: block; }
 .card {
-  display: flex; flex-direction: column; min-width: 0; padding: 22px 24px 18px; overflow-wrap: anywhere;
-  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow);
-  transition: border-color .15s ease;
+  display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 0 32px;
+  padding: 32px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere;
 }
-@media (hover: hover) { .card:hover { border-color: var(--line-strong); } }
-.card-kicker { font: 600 0.71875rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
-.card h2 { margin: 10px 0 8px; font-size: 1.25rem; line-height: 1.4; font-weight: 700; }
-.card h2 a:hover { color: var(--accent); }
+.card-side { padding-top: 6px; color: var(--muted); font: 0.78125rem/1.6 var(--mono); font-variant-numeric: tabular-nums; }
+.card-kicker { display: block; margin-top: 4px; font: 600 0.75rem/1.5 var(--sans); letter-spacing: .04em; color: var(--accent); }
+.card-main { max-width: 760px; }
+.card h2 { margin: 0 0 10px; font-size: 1.375rem; line-height: 1.4; font-weight: 700; letter-spacing: -0.005em; text-wrap: balance; }
+.card h2 a { transition: color .15s ease; }
+@media (hover: hover) { .card h2 a:hover { color: var(--accent); } }
+.card h2 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 .card h2 code { color: var(--accent); font-weight: 600; }
-.card .deck { margin: 0 0 14px; color: var(--ink-2); font-size: 0.90625rem; line-height: 1.7; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.chips span { padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 0.75rem; }
-.card details { margin-top: auto; border-top: 1px solid var(--line); padding-top: 10px; }
-.card summary { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--muted); font-size: 0.8125rem; list-style: none; }
+.card .deck { margin: 0 0 12px; color: var(--ink-2); font-size: 0.9375rem; line-height: 1.75; }
+.card .info { margin: 0; color: var(--muted); font-size: 0.8125rem; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.card .info span + span::before { content: "·"; margin: 0 8px; color: var(--faint); }
+.card details { margin-top: 10px; }
+.card summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--accent); font-size: 0.8125rem; list-style: none; }
 .card summary::-webkit-details-marker { display: none; }
-.card summary::after { content: "展开章节"; flex: none; margin-left: auto; color: var(--accent); white-space: nowrap; }
-.card details[open] summary::after { content: "收起"; }
-.card ol { margin: 10px 0 4px; padding-left: 1.6em; font-size: 0.84375rem; line-height: 1.6; color: var(--ink-2); }
-.card ol li { margin: 4px 0; }
-.card ol li::marker { color: var(--muted); font-family: var(--mono); font-size: 0.75rem; }
-.card ol a:hover { color: var(--accent); }
+.card summary::before { content: "+"; width: 1em; font-family: var(--mono); text-align: center; }
+.card details[open] summary::before { content: "−"; }
+.card summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.card ol { columns: 2 280px; column-gap: 32px; margin: 12px 0 0; padding: 12px 0 0 1.8em; border-top: 1px solid var(--line); font-size: 0.84375rem; line-height: 1.6; color: var(--ink-2); }
+.card ol li { margin: 0 0 6px; break-inside: avoid; }
+.card ol li::marker { color: var(--faint); font-family: var(--mono); font-size: 0.71875rem; }
+@media (hover: hover) { .card ol a:hover { color: var(--accent); } }
 .empty { padding: 60px 0; text-align: center; color: var(--muted); }
 .empty p { margin: 0 0 14px; }
 .empty button { height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 0.875rem var(--sans); cursor: pointer; }
+.back { display: inline-block; margin-bottom: 14px; color: var(--muted); font-size: 0.84375rem; }
+.back:hover { color: var(--accent); }
+.topics { margin: 0 0 48px; }
+.topics h2 { margin: 0 0 12px; font: 600 0.6875rem/1 var(--mono); letter-spacing: .14em; color: var(--faint); }
+.topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+.topic {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 16px;
+  padding: 18px 22px; border-radius: 12px; background: var(--ink); color: var(--bg);
+  transition: transform .15s ease;
+}
+@media (hover: hover) { .topic:hover { transform: translateY(-1px); } }
+.topic:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.topic strong { font-size: 1.0625rem; }
+.topic span { grid-column: 1; color: color-mix(in srgb, var(--bg) 72%, var(--ink)); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.topic::after { content: "→"; grid-column: 2; grid-row: 1 / 3; font-size: 1.125rem; }
 .foot { margin-top: 56px; color: var(--muted); font-size: 0.78125rem; }
 .foot code { padding: 1px 5px; border-radius: 4px; background: var(--sunken); color: var(--muted); }
 mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
@@ -110,7 +128,10 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
   .page { padding: 0 16px 64px; }
   .toolbar { position: static; margin: 0 -16px 20px; padding: 12px 16px; }
   .search, .sort { font-size: 1rem; }
-  .grid { grid-template-columns: 1fr; }
+  .card { grid-template-columns: 1fr; padding: 24px 0; }
+  .card-side { display: flex; gap: 10px; align-items: baseline; padding: 0 0 6px; }
+  .card-kicker { margin: 0; }
+  .card h2 { font-size: 1.1875rem; }
   .sort { margin-left: 0; }
 }
 </style>
@@ -125,10 +146,12 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
     <h1>技术文章</h1>
     <p class="summary" data-summary></p>
   </header>
+  <section class="topics" aria-label="专题"><h2>专题</h2><div class="topic-grid"><a class="topic" href="deepseek/index.html"><strong>DeepSeek 学习笔记</strong><span>5 篇 · 最近更新 2026-11-24</span></a></div></section>
   <div class="toolbar">
     <input class="search" type="search" placeholder="搜索标题、摘要或章节…" aria-label="搜索文章" data-search>
     <div class="tags" data-tags></div>
     <select class="sort" data-sort aria-label="排序">
+      <option value="created">最近创建</option>
       <option value="updated">最近更新</option>
       <option value="title">按标题</option>
       <option value="length">按篇幅</option>
@@ -136,9 +159,9 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
   </div>
   <main class="grid" data-grid></main>
   <div class="empty" data-empty hidden><p data-empty-msg></p><button type="button" data-clear>清除搜索和筛选</button></div>
-  <footer class="foot">由 <code>build_index.py</code> 生成于 2026-11-20。新增或删除文章后重新运行即可更新。</footer>
+  <footer class="foot">由 <code>build_index.py</code> 生成于 2026-11-23。新增或删除文章后重新运行即可更新。</footer>
 </div>
-<script id="articles" type="application/json">[{"title": "给 AI Agent 造一台电脑：虚拟机沙箱设计与学习路线", "title_html": "给 AI Agent 造一台电脑：虚拟机沙箱设计与学习路线", "kicker": "设计指南", "deck": "从零理解如何为 agent 构建可运行 macOS / Linux 客机、带完整 GUI 交互和网络控制的虚拟机平台：每一层有哪些做法、怎么取舍、按什么顺序学。", "meta": ["macOS · Linux 客机", "GUI 交互", "网络控制", "学习路线"], "sections": ["全景：你要造的不是虚拟机，而是“给 agent 租电脑”的系统", "只需要先懂 6 个概念，其余的边做边学", "平台选型：要跑 macOS 客机，就必须有 Mac", "GUI 交互：像素和键鼠从外面拿，界面结构从里面拿", "网络控制：默认全部拒绝，规则只在宿主机上执行", "生命周期：每个任务一台新机器，用完即弃", "给 agent 的接口：把一台机器包装成一组工具", "学习路线：五个阶段，每个阶段交付一个能跑的东西"], "chars": 8620, "minutes": 20, "updated": "2026-11-19", "links": [{"text": "全景：你要造的不是虚拟机，而是“给 agent 租电脑”的系统", "id": "全景你要造的不是虚拟机而是给-agent-租电脑的系统"}, {"text": "只需要先懂 6 个概念，其余的边做边学", "id": "只需要先懂-6-个概念其余的边做边学"}, {"text": "平台选型：要跑 macOS 客机，就必须有 Mac", "id": "平台选型要跑-macos-客机就必须有-mac"}, {"text": "GUI 交互：像素和键鼠从外面拿，界面结构从里面拿", "id": "gui-交互像素和键鼠从外面拿界面结构从里面拿"}, {"text": "网络控制：默认全部拒绝，规则只在宿主机上执行", "id": "网络控制默认全部拒绝规则只在宿主机上执行"}, {"text": "生命周期：每个任务一台新机器，用完即弃", "id": "生命周期每个任务一台新机器用完即弃"}, {"text": "给 agent 的接口：把一台机器包装成一组工具", "id": "给-agent-的接口把一台机器包装成一组工具"}, {"text": "学习路线：五个阶段，每个阶段交付一个能跑的东西", "id": "学习路线五个阶段每个阶段交付一个能跑的东西"}], "file": "agent_vm_sandbox_guide.html"}, {"title": "Claude Code 的架构：模型之外的那一层 harness", "title_html": "Claude Code 的架构：模型之外的那一层 harness", "kicker": "架构解读", "deck": "基于 Anthropic 工程博客与官方文档（截至 2026-11-20），拆解 Claude Code 的循环、上下文与缓存、工具与 Code Mode、扩展层、多代理、权限与沙箱和运行形态：循环本身很朴素，复杂度几乎都在循环之外。", "meta": ["Claude Code v2.1.329（2026-11-19）", "anthropic.com/engineering + code.claude.com/docs"], "sections": ["总体：Claude Code 的价值在模型之外的那一层", "上下文与缓存：每轮都重发全部上下文，所以每个字节都要算账", "工具面在收缩：更少的专用工具，更强的 Bash", "Code Mode：让模型写 JavaScript 来调用工具", "扩展层：按“上下文成本”和“确定性”给每种扩展定位", "多代理四档：区别在于谁持有计划", "安全：环境隔离兜底，分类器减负", "长任务与运行形态：把会话从终端里解放出来", "设计取舍总览：每个选择都在付一种代价"], "chars": 18392, "minutes": 34, "updated": "2026-11-20", "links": [{"text": "总体：Claude Code 的价值在模型之外的那一层", "id": "总体claude-code-的价值在模型之外的那一层"}, {"text": "上下文与缓存：每轮都重发全部上下文，所以每个字节都要算账", "id": "上下文与缓存每轮都重发全部上下文所以每个字节都要算账"}, {"text": "工具面在收缩：更少的专用工具，更强的 Bash", "id": "工具面在收缩更少的专用工具更强的-bash"}, {"text": "Code Mode：让模型写 JavaScript 来调用工具", "id": "code-mode让模型写-javascript-来调用工具"}, {"text": "扩展层：按“上下文成本”和“确定性”给每种扩展定位", "id": "扩展层按上下文成本和确定性给每种扩展定位"}, {"text": "多代理四档：区别在于谁持有计划", "id": "多代理四档区别在于谁持有计划"}, {"text": "安全：环境隔离兜底，分类器减负", "id": "安全环境隔离兜底分类器减负"}, {"text": "长任务与运行形态：把会话从终端里解放出来", "id": "长任务与运行形态把会话从终端里解放出来"}, {"text": "设计取舍总览：每个选择都在付一种代价", "id": "设计取舍总览每个选择都在付一种代价"}], "file": "claude_code_architecture_guide.html"}, {"title": "Claude Code /loop 是怎么工作的：从一条命令到每次定时唤醒", "title_html": "Claude Code <code>/loop<\/code> 是怎么工作的：从一条命令到每次定时唤醒", "kicker": "源码拆解", "deck": "基于 Claude Code v2.1.325 二进制包还原的源码和提示词原文，讲清 /loop 如何解析参数、如何预约下一次、唤醒时消息怎么回到对话，以及这些设计如何配合 5 分钟的 Prompt Cache。", "meta": ["Claude Code v2.1.325", "源码与提示词原文"], "sections": ["先看全貌：一条命令如何变成反复执行的循环", "三种用法：/loop 后面写什么，决定它怎么跑", "模型收到的指令：四份提示词原文", "定时器到期后：消息怎么回到对话里", "为什么不每次都重发完整指令：哨兵与前缀缓存", "等多久再叫醒：缓存窗口、抖动与兜底", "对照：其他 Agent 怎么把定时消息送进会话", "小结：/loop 的五个设计要点"], "chars": 9377, "minutes": 38, "updated": "2026-11-17", "links": [{"text": "先看全貌：一条命令如何变成反复执行的循环", "id": "先看全貌一条命令如何变成反复执行的循环"}, {"text": "三种用法：/loop 后面写什么，决定它怎么跑", "id": "三种用法loop-后面写什么决定它怎么跑"}, {"text": "模型收到的指令：四份提示词原文", "id": "模型收到的指令四份提示词原文"}, {"text": "定时器到期后：消息怎么回到对话里", "id": "定时器到期后消息怎么回到对话里"}, {"text": "为什么不每次都重发完整指令：哨兵与前缀缓存", "id": "为什么不每次都重发完整指令哨兵与前缀缓存"}, {"text": "等多久再叫醒：缓存窗口、抖动与兜底", "id": "等多久再叫醒缓存窗口抖动与兜底"}, {"text": "对照：其他 Agent 怎么把定时消息送进会话", "id": "对照其他-agent-怎么把定时消息送进会话"}, {"text": "小结：/loop 的五个设计要点", "id": "小结loop-的五个设计要点"}], "file": "claude_code_loop_visual_guide.html"}, {"title": "Codex 的架构：一个开源 harness 如何支撑所有界面", "title_html": "Codex 的架构：一个开源 harness 如何支撑所有界面", "kicker": "架构解读", "deck": "基于 OpenAI 工程博客、Codex 文档与 openai/codex 源码（截至 2026-11-20），拆解 Codex 的 App Server、无状态 agent 循环、工具面、Code Mode、OS 原生沙箱、Auto-review、多代理与平台化设计。", "meta": ["openai/codex @ 4389a52", "openai.com/index + learn.chatgpt.com/docs"], "sections": ["一个 harness 撑起所有界面：Codex core 加 App Server", "Agent 循环：每次请求都完整、无状态", "工具面：一个 PTY、一种补丁语法、一个提权入口", "Code Mode：模型写 JavaScript，工具变成函数", "沙箱：在用户原有环境里约束命令，而不是搬进容器", "审批：交给规则、交给人，或交给另一个 agent", "多代理：每个子代理是一个线程，靠邮箱协作", "指令、技能、记忆与 hooks：都是“在启动时决定放进什么”", "平台化：harness 与执行环境分离，界面与长任务各自扩展", "设计取舍总结"], "chars": 29164, "minutes": 65, "updated": "2026-11-20", "links": [{"text": "一个 harness 撑起所有界面：Codex core 加 App Server", "id": "一个-harness-撑起所有界面codex-core-加-app-server"}, {"text": "Agent 循环：每次请求都完整、无状态", "id": "agent-循环每次请求都完整无状态"}, {"text": "工具面：一个 PTY、一种补丁语法、一个提权入口", "id": "工具面一个-pty一种补丁语法一个提权入口"}, {"text": "Code Mode：模型写 JavaScript，工具变成函数", "id": "code-mode模型写-javascript工具变成函数"}, {"text": "沙箱：在用户原有环境里约束命令，而不是搬进容器", "id": "沙箱在用户原有环境里约束命令而不是搬进容器"}, {"text": "审批：交给规则、交给人，或交给另一个 agent", "id": "审批交给规则交给人或交给另一个-agent"}, {"text": "多代理：每个子代理是一个线程，靠邮箱协作", "id": "多代理每个子代理是一个线程靠邮箱协作"}, {"text": "指令、技能、记忆与 hooks：都是“在启动时决定放进什么”", "id": "指令技能记忆与-hooks都是在启动时决定放进什么"}, {"text": "平台化：harness 与执行环境分离，界面与长任务各自扩展", "id": "平台化harness-与执行环境分离界面与长任务各自扩展"}, {"text": "设计取舍总结", "id": "设计取舍总结"}], "file": "codex_architecture_guide.html"}, {"title": "Codex CLI /goal 的实现：数据流与设计取舍", "title_html": "Codex CLI <code>/goal<\/code> 的实现：数据流与设计取舍", "kicker": "源码拆解", "deck": "沿着一次 /goal 的真实数据流，从 TUI、app-server、goal 扩展到 SQLite，拆解 Codex 如何持久化目标、在空闲时续跑、用 prompt 和代码双重约束“完成”，并逐段解读全部 prompt 原文，说明这些设计为什么能让长任务 agent 更可靠。", "meta": ["openai/codex @ 4389a52", "codex-rs/ext/goal", "源码与 Prompt 原文"], "sections": ["一张图看完：/goal 的数据从哪来、到哪去", "第一跳：/goal 不是一条 prompt，而是一次状态写入", "续跑靠“线程空闲”事件，而不是拦住模型的退出", "continuation.md 逐段解读：每一轮都重新钉住目标和完成标准", "其余 prompt：预算收尾、改写目标、工具描述和返回给模型的文字", "三个工具划清权力：模型能宣布完成，不能给自己续命", "刹车装在代码里：计量、预算和“连续 3 次”", "六个状态，以及谁有权拨动它们", "边界与安全：目标文本是数据，不是指令", "这样设计对 agent 效果的好处，以及它没解决的问题"], "chars": 16967, "minutes": 40, "updated": "2026-11-19", "links": [{"text": "一张图看完：/goal 的数据从哪来、到哪去", "id": "一张图看完goal-的数据从哪来到哪去"}, {"text": "第一跳：/goal 不是一条 prompt，而是一次状态写入", "id": "第一跳goal-不是一条-prompt而是一次状态写入"}, {"text": "续跑靠“线程空闲”事件，而不是拦住模型的退出", "id": "续跑靠线程空闲事件而不是拦住模型的退出"}, {"text": "continuation.md 逐段解读：每一轮都重新钉住目标和完成标准", "id": "continuationmd-逐段解读每一轮都重新钉住目标和完成标准"}, {"text": "其余 prompt：预算收尾、改写目标、工具描述和返回给模型的文字", "id": "其余-prompt预算收尾改写目标工具描述和返回给模型的文字"}, {"text": "三个工具划清权力：模型能宣布完成，不能给自己续命", "id": "三个工具划清权力模型能宣布完成不能给自己续命"}, {"text": "刹车装在代码里：计量、预算和“连续 3 次”", "id": "刹车装在代码里计量预算和连续-3-次"}, {"text": "六个状态，以及谁有权拨动它们", "id": "六个状态以及谁有权拨动它们"}, {"text": "边界与安全：目标文本是数据，不是指令", "id": "边界与安全目标文本是数据不是指令"}, {"text": "这样设计对 agent 效果的好处，以及它没解决的问题", "id": "这样设计对-agent-效果的好处以及它没解决的问题"}], "file": "codex_goal_dataflow_design.html"}, {"title": "开源 Agent 的 /goal 实现深挖：prompt 原文、状态机与防死循环", "title_html": "开源 Agent 的 <code>/goal<\/code> 实现深挖：prompt 原文、状态机与防死循环", "kicker": "源码拆解", "deck": "逐个拆开 Codex、Qwen Code、Hermes、OpenHands、opencode 家族、Claude Code 生态、Goose、Cline 和 Ralph 外循环：下一轮从哪来、谁判定完成、怎么防止停不下来。", "meta": ["源码快照 2026-11-18", "Codex · Qwen · Hermes · OpenHands · opencode · Kilo · Claude Code · Goose · Cline"], "sections": ["所有 /goal 共用一个骨架：存目标、跑一轮、判定、再注入", "Codex CLI：/goal 不是 prompt，而是一行 SQLite 记录", "Qwen Code：模型只能提议完成，独立 Verifier 拍板", "Hermes 与 OpenHands：每轮结束后外挂一个裁判", "OpenCode 家族：同一个空闲时刻，三种完全不同的做法", "Claude Code 生态：一切都建在 Stop hook 的 block 上", "最轻的几种：Goose 的提示、Cline 的追问、外部 bash 循环", "横向对比：状态集合、判定者、存储、触发与护栏", "怎样做一个可靠的 /goal：从这些实现里学到的八条"], "chars": 22688, "minutes": 62, "updated": "2026-11-18", "links": [{"text": "所有 /goal 共用一个骨架：存目标、跑一轮、判定、再注入", "id": "所有-goal-共用一个骨架存目标跑一轮判定再注入"}, {"text": "Codex CLI：/goal 不是 prompt，而是一行 SQLite 记录", "id": "codex-cligoal-不是-prompt而是一行-sqlite-记录"}, {"text": "Qwen Code：模型只能提议完成，独立 Verifier 拍板", "id": "qwen-code模型只能提议完成独立-verifier-拍板"}, {"text": "Hermes 与 OpenHands：每轮结束后外挂一个裁判", "id": "hermes-与-openhands每轮结束后外挂一个裁判"}, {"text": "OpenCode 家族：同一个空闲时刻，三种完全不同的做法", "id": "opencode-家族同一个空闲时刻三种完全不同的做法"}, {"text": "Claude Code 生态：一切都建在 Stop hook 的 block 上", "id": "claude-code-生态一切都建在-stop-hook-的-block-上"}, {"text": "最轻的几种：Goose 的提示、Cline 的追问、外部 bash 循环", "id": "最轻的几种goose-的提示cline-的追问外部-bash-循环"}, {"text": "横向对比：状态集合、判定者、存储、触发与护栏", "id": "横向对比状态集合判定者存储触发与护栏"}, {"text": "怎样做一个可靠的 /goal：从这些实现里学到的八条", "id": "怎样做一个可靠的-goal从这些实现里学到的八条"}], "file": "open_source_agent_goal_deep_dive.html"}, {"title": "开源 Agent 的 /goal 是怎么实现的：从 Ralph 死循环到内核级目标状态机", "title_html": "开源 Agent 的 <code>/goal<\/code> 是怎么实现的：从 Ralph 死循环到内核级目标状态机", "kicker": "架构拆解", "deck": "基于 Claude Code ralph-loop、snarktank/ralph、open-ralph-wiggum、oh-my-claudecode、oh-my-opencode、Prime Agent 与 DeepSeek Harness 的真实源码与提示词原文，拆解开源 Agent 如何拦截过早退出、持久化目标状态、校验完成声明，以及防止死循环和越权。", "meta": ["7 个开源项目源码对照", "源码与提示词原文"], "sections": ["先看全貌：让 Agent 不半途而废的四种架构", "Claude Code ralph-loop：用 Stop Hook 把退出拦在门内", "外循环与清零上下文：snarktank/ralph 与 open-ralph-wiggum", "从暗号到状态机：oh-my-claudecode 与 oh-my-opencode 的演进", "Prime Agent：把 Goal 写进 Rust 会话内核", "DeepSeek Harness：事件溯源、CAS 锁与权限隔离", "横向对比：七种开源实现的关键工程决策", "小结：实现一个可靠的 /goal 必须解决的五个问题"], "chars": 10767, "minutes": 37, "updated": "2026-11-18", "links": [{"text": "先看全貌：让 Agent 不半途而废的四种架构", "id": "先看全貌让-agent-不半途而废的四种架构"}, {"text": "Claude Code ralph-loop：用 Stop Hook 把退出拦在门内", "id": "claude-code-ralph-loop用-stop-hook-把退出拦在门内"}, {"text": "外循环与清零上下文：snarktank/ralph 与 open-ralph-wiggum", "id": "外循环与清零上下文snarktankralph-与-open-ralph-wiggum"}, {"text": "从暗号到状态机：oh-my-claudecode 与 oh-my-opencode 的演进", "id": "从暗号到状态机oh-my-claudecode-与-oh-my-opencode-的演进"}, {"text": "Prime Agent：把 Goal 写进 Rust 会话内核", "id": "prime-agent把-goal-写进-rust-会话内核"}, {"text": "DeepSeek Harness：事件溯源、CAS 锁与权限隔离", "id": "deepseek-harness事件溯源cas-锁与权限隔离"}, {"text": "横向对比：七种开源实现的关键工程决策", "id": "横向对比七种开源实现的关键工程决策"}, {"text": "小结：实现一个可靠的 /goal 必须解决的五个问题", "id": "小结实现一个可靠的-goal-必须解决的五个问题"}], "file": "open_source_agent_goal_visual_guide.html"}, {"title": "Pi、Prime Agent 与 Codex CLI 的定时循环：三种把消息送回对话的方法", "title_html": "Pi、Prime Agent 与 Codex CLI 的定时循环：三种把消息送回对话的方法", "kicker": "源码拆解", "deck": "对照 Claude Code 的 /loop，拆解 pi-loop 插件、Prime Agent 心跳和 Codex CLI 的 cronex，看它们怎样选择插入时机、防止消息堆积、让会话保持存活。", "meta": ["pi-loop · Prime Agent · cronex", "源码与提示词原文"], "sections": ["先看结论：定时消息只有两个插入点", "pi-loop：插件怎么教模型建循环", "pi-loop：到期后消息怎么送到模型面前", "Prime Agent：心跳是 REPL 里的一个函数", "Prime Agent：心跳到期后的五步", "cronex：给没有调度器的 Codex 补上定时", "cronex：两条通道把消息送进会话", "pr-loop：一周长的任务怎么排", "四种实现放在一起对比", "小结：选插入点，就是在及时和稳定之间取舍"], "chars": 7742, "minutes": 27, "updated": "2026-11-17", "links": [{"text": "先看结论：定时消息只有两个插入点", "id": "先看结论定时消息只有两个插入点"}, {"text": "pi-loop：插件怎么教模型建循环", "id": "pi-loop插件怎么教模型建循环"}, {"text": "pi-loop：到期后消息怎么送到模型面前", "id": "pi-loop到期后消息怎么送到模型面前"}, {"text": "Prime Agent：心跳是 REPL 里的一个函数", "id": "prime-agent心跳是-repl-里的一个函数"}, {"text": "Prime Agent：心跳到期后的五步", "id": "prime-agent心跳到期后的五步"}, {"text": "cronex：给没有调度器的 Codex 补上定时", "id": "cronex给没有调度器的-codex-补上定时"}, {"text": "cronex：两条通道把消息送进会话", "id": "cronex两条通道把消息送进会话"}, {"text": "pr-loop：一周长的任务怎么排", "id": "pr-loop一周长的任务怎么排"}, {"text": "四种实现放在一起对比", "id": "四种实现放在一起对比"}, {"text": "小结：选插入点，就是在及时和稳定之间取舍", "id": "小结选插入点就是在及时和稳定之间取舍"}], "file": "pi_and_codex_loop_visual_guide.html"}]</script>
+<script id="articles" type="application/json">[{"title": "Agent 的前缀缓存怎么测：Codex、opencode、Pydantic AI 的做法与一套测试方案", "title_html": "Agent 的前缀缓存怎么测：Codex、opencode、Pydantic AI 的做法与一套测试方案", "kicker": "测试方法", "deck": "前缀缓存是否命中，大部分由 harness 发出的请求决定。本文拆解 Codex、opencode、Pydantic AI 和两家官方诊断接口分别在哪一层测缓存，给出一套从 CI 到线上的四层测试方案，并逐条分析这套方案的盲区和容易误判的地方。", "meta": ["openai/codex @ a1604a8（2026-11-23）", "anomalyco/opencode @ 1906056（2026-11-23）", "官方文档截至 2026-11-23"], "sections": ["原理：缓存只认“开头逐字节相同”", "四层测试：从最便宜的离线断言到线上诊断", "Codex：mock 服务器加逐字节断言，快照里的 Window 就是断点", "opencode：断点放置单测，加上录制回放的命中测试", "线上：Pydantic AI 判定缓存断崖，官方接口告诉你哪里变了", "如果让我来做：一条从 CI 到线上的流水线", "潜在问题：这套测试会漏掉什么，又会误报什么", "小结"], "chars": 7543, "minutes": 16, "updated": "2026-11-23", "created": "2026-11-23 17:03", "links": [{"text": "原理：缓存只认“开头逐字节相同”", "id": "原理缓存只认开头逐字节相同"}, {"text": "四层测试：从最便宜的离线断言到线上诊断", "id": "四层测试从最便宜的离线断言到线上诊断"}, {"text": "Codex：mock 服务器加逐字节断言，快照里的 Window 就是断点", "id": "codexmock-服务器加逐字节断言快照里的-window-就是断点"}, {"text": "opencode：断点放置单测，加上录制回放的命中测试", "id": "opencode断点放置单测加上录制回放的命中测试"}, {"text": "线上：Pydantic AI 判定缓存断崖，官方接口告诉你哪里变了", "id": "线上pydantic-ai-判定缓存断崖官方接口告诉你哪里变了"}, {"text": "如果让我来做：一条从 CI 到线上的流水线", "id": "如果让我来做一条从-ci-到线上的流水线"}, {"text": "潜在问题：这套测试会漏掉什么，又会误报什么", "id": "潜在问题这套测试会漏掉什么又会误报什么"}, {"text": "小结", "id": "小结"}], "file": "agent_prompt_cache_testing.html"}, {"title": "给 AI Agent 造一台电脑：虚拟机沙箱设计与学习路线", "title_html": "给 AI Agent 造一台电脑：虚拟机沙箱设计与学习路线", "kicker": "设计指南", "deck": "从零理解如何为 agent 构建可运行 macOS / Linux 客机、带完整 GUI 交互和网络控制的虚拟机平台：每一层有哪些做法、怎么取舍、按什么顺序学。", "meta": ["macOS · Linux 客机", "GUI 交互", "网络控制", "学习路线"], "sections": ["全景：你要造的不是虚拟机，而是“给 agent 租电脑”的系统", "只需要先懂 6 个概念，其余的边做边学", "平台选型：要跑 macOS 客机，就必须有 Mac", "GUI 交互：像素和键鼠从外面拿，界面结构从里面拿", "网络控制：默认全部拒绝，规则只在宿主机上执行", "生命周期：每个任务一台新机器，用完即弃", "给 agent 的接口：把一台机器包装成一组工具", "学习路线：五个阶段，每个阶段交付一个能跑的东西"], "chars": 8620, "minutes": 20, "updated": "2026-11-19", "created": "2026-11-19", "links": [{"text": "全景：你要造的不是虚拟机，而是“给 agent 租电脑”的系统", "id": "全景你要造的不是虚拟机而是给-agent-租电脑的系统"}, {"text": "只需要先懂 6 个概念，其余的边做边学", "id": "只需要先懂-6-个概念其余的边做边学"}, {"text": "平台选型：要跑 macOS 客机，就必须有 Mac", "id": "平台选型要跑-macos-客机就必须有-mac"}, {"text": "GUI 交互：像素和键鼠从外面拿，界面结构从里面拿", "id": "gui-交互像素和键鼠从外面拿界面结构从里面拿"}, {"text": "网络控制：默认全部拒绝，规则只在宿主机上执行", "id": "网络控制默认全部拒绝规则只在宿主机上执行"}, {"text": "生命周期：每个任务一台新机器，用完即弃", "id": "生命周期每个任务一台新机器用完即弃"}, {"text": "给 agent 的接口：把一台机器包装成一组工具", "id": "给-agent-的接口把一台机器包装成一组工具"}, {"text": "学习路线：五个阶段，每个阶段交付一个能跑的东西", "id": "学习路线五个阶段每个阶段交付一个能跑的东西"}], "file": "agent_vm_sandbox_guide.html"}, {"title": "Claude Code 的架构：模型之外的那一层 harness", "title_html": "Claude Code 的架构：模型之外的那一层 harness", "kicker": "架构解读", "deck": "基于 Anthropic 工程博客与官方文档（截至 2026-11-20），拆解 Claude Code 的循环、上下文与缓存、工具与 Code Mode、扩展层、多代理、权限与沙箱和运行形态：循环本身很朴素，复杂度几乎都在循环之外。", "meta": ["Claude Code v2.1.329（2026-11-19）", "anthropic.com/engineering + code.claude.com/docs"], "sections": ["总体：Claude Code 的价值在模型之外的那一层", "上下文与缓存：每轮都重发全部上下文，所以每个字节都要算账", "工具面在收缩：更少的专用工具，更强的 Bash", "Code Mode：让模型写 JavaScript 来调用工具", "扩展层：按“上下文成本”和“确定性”给每种扩展定位", "多代理四档：区别在于谁持有计划", "安全：环境隔离兜底，分类器减负", "长任务与运行形态：把会话从终端里解放出来", "设计取舍总览：每个选择都在付一种代价"], "chars": 18392, "minutes": 34, "updated": "2026-11-20", "created": "2026-11-20", "links": [{"text": "总体：Claude Code 的价值在模型之外的那一层", "id": "总体claude-code-的价值在模型之外的那一层"}, {"text": "上下文与缓存：每轮都重发全部上下文，所以每个字节都要算账", "id": "上下文与缓存每轮都重发全部上下文所以每个字节都要算账"}, {"text": "工具面在收缩：更少的专用工具，更强的 Bash", "id": "工具面在收缩更少的专用工具更强的-bash"}, {"text": "Code Mode：让模型写 JavaScript 来调用工具", "id": "code-mode让模型写-javascript-来调用工具"}, {"text": "扩展层：按“上下文成本”和“确定性”给每种扩展定位", "id": "扩展层按上下文成本和确定性给每种扩展定位"}, {"text": "多代理四档：区别在于谁持有计划", "id": "多代理四档区别在于谁持有计划"}, {"text": "安全：环境隔离兜底，分类器减负", "id": "安全环境隔离兜底分类器减负"}, {"text": "长任务与运行形态：把会话从终端里解放出来", "id": "长任务与运行形态把会话从终端里解放出来"}, {"text": "设计取舍总览：每个选择都在付一种代价", "id": "设计取舍总览每个选择都在付一种代价"}], "file": "claude_code_architecture_guide.html"}, {"title": "Claude Code /loop 是怎么工作的：从一条命令到每次定时唤醒", "title_html": "Claude Code <code>/loop<\/code> 是怎么工作的：从一条命令到每次定时唤醒", "kicker": "源码拆解", "deck": "基于 Claude Code v2.1.325 二进制包还原的源码和提示词原文，讲清 /loop 如何解析参数、如何预约下一次、唤醒时消息怎么回到对话，以及这些设计如何配合 5 分钟的 Prompt Cache。", "meta": ["Claude Code v2.1.325", "源码与提示词原文"], "sections": ["先看全貌：一条命令如何变成反复执行的循环", "三种用法：/loop 后面写什么，决定它怎么跑", "模型收到的指令：四份提示词原文", "定时器到期后：消息怎么回到对话里", "为什么不每次都重发完整指令：哨兵与前缀缓存", "等多久再叫醒：缓存窗口、抖动与兜底", "对照：其他 Agent 怎么把定时消息送进会话", "小结：/loop 的五个设计要点"], "chars": 9377, "minutes": 38, "updated": "2026-11-17", "created": "2026-11-17", "links": [{"text": "先看全貌：一条命令如何变成反复执行的循环", "id": "先看全貌一条命令如何变成反复执行的循环"}, {"text": "三种用法：/loop 后面写什么，决定它怎么跑", "id": "三种用法loop-后面写什么决定它怎么跑"}, {"text": "模型收到的指令：四份提示词原文", "id": "模型收到的指令四份提示词原文"}, {"text": "定时器到期后：消息怎么回到对话里", "id": "定时器到期后消息怎么回到对话里"}, {"text": "为什么不每次都重发完整指令：哨兵与前缀缓存", "id": "为什么不每次都重发完整指令哨兵与前缀缓存"}, {"text": "等多久再叫醒：缓存窗口、抖动与兜底", "id": "等多久再叫醒缓存窗口抖动与兜底"}, {"text": "对照：其他 Agent 怎么把定时消息送进会话", "id": "对照其他-agent-怎么把定时消息送进会话"}, {"text": "小结：/loop 的五个设计要点", "id": "小结loop-的五个设计要点"}], "file": "claude_code_loop_visual_guide.html"}, {"title": "Codex 的架构：一个开源 harness 如何支撑所有界面", "title_html": "Codex 的架构：一个开源 harness 如何支撑所有界面", "kicker": "架构解读", "deck": "基于 OpenAI 工程博客、Codex 文档与 openai/codex 源码（截至 2026-11-20），拆解 Codex 的 App Server、无状态 agent 循环、工具面、Code Mode、OS 原生沙箱、Auto-review、多代理与平台化设计。", "meta": ["openai/codex @ 4389a52", "openai.com/index + learn.chatgpt.com/docs"], "sections": ["一个 harness 撑起所有界面：Codex core 加 App Server", "Agent 循环：每次请求都完整、无状态", "工具面：一个 PTY、一种补丁语法、一个提权入口", "Code Mode：模型写 JavaScript，工具变成函数", "沙箱：在用户原有环境里约束命令，而不是搬进容器", "审批：交给规则、交给人，或交给另一个 agent", "多代理：每个子代理是一个线程，靠邮箱协作", "指令、技能、记忆与 hooks：都是“在启动时决定放进什么”", "平台化：harness 与执行环境分离，界面与长任务各自扩展", "设计取舍总结"], "chars": 29164, "minutes": 65, "updated": "2026-11-20", "created": "2026-11-20", "links": [{"text": "一个 harness 撑起所有界面：Codex core 加 App Server", "id": "一个-harness-撑起所有界面codex-core-加-app-server"}, {"text": "Agent 循环：每次请求都完整、无状态", "id": "agent-循环每次请求都完整无状态"}, {"text": "工具面：一个 PTY、一种补丁语法、一个提权入口", "id": "工具面一个-pty一种补丁语法一个提权入口"}, {"text": "Code Mode：模型写 JavaScript，工具变成函数", "id": "code-mode模型写-javascript工具变成函数"}, {"text": "沙箱：在用户原有环境里约束命令，而不是搬进容器", "id": "沙箱在用户原有环境里约束命令而不是搬进容器"}, {"text": "审批：交给规则、交给人，或交给另一个 agent", "id": "审批交给规则交给人或交给另一个-agent"}, {"text": "多代理：每个子代理是一个线程，靠邮箱协作", "id": "多代理每个子代理是一个线程靠邮箱协作"}, {"text": "指令、技能、记忆与 hooks：都是“在启动时决定放进什么”", "id": "指令技能记忆与-hooks都是在启动时决定放进什么"}, {"text": "平台化：harness 与执行环境分离，界面与长任务各自扩展", "id": "平台化harness-与执行环境分离界面与长任务各自扩展"}, {"text": "设计取舍总结", "id": "设计取舍总结"}], "file": "codex_architecture_guide.html"}, {"title": "Codex CLI /goal 的实现：数据流与设计取舍", "title_html": "Codex CLI <code>/goal<\/code> 的实现：数据流与设计取舍", "kicker": "源码拆解", "deck": "沿着一次 /goal 的真实数据流，从 TUI、app-server、goal 扩展到 SQLite，拆解 Codex 如何持久化目标、在空闲时续跑、用 prompt 和代码双重约束“完成”，并逐段解读全部 prompt 原文，说明这些设计为什么能让长任务 agent 更可靠。", "meta": ["openai/codex @ 4389a52", "codex-rs/ext/goal", "源码与 Prompt 原文"], "sections": ["一张图看完：/goal 的数据从哪来、到哪去", "第一跳：/goal 不是一条 prompt，而是一次状态写入", "续跑靠“线程空闲”事件，而不是拦住模型的退出", "continuation.md 逐段解读：每一轮都重新钉住目标和完成标准", "其余 prompt：预算收尾、改写目标、工具描述和返回给模型的文字", "三个工具划清权力：模型能宣布完成，不能给自己续命", "刹车装在代码里：计量、预算和“连续 3 次”", "六个状态，以及谁有权拨动它们", "边界与安全：目标文本是数据，不是指令", "这样设计对 agent 效果的好处，以及它没解决的问题"], "chars": 16967, "minutes": 40, "updated": "2026-11-19", "created": "2026-11-19", "links": [{"text": "一张图看完：/goal 的数据从哪来、到哪去", "id": "一张图看完goal-的数据从哪来到哪去"}, {"text": "第一跳：/goal 不是一条 prompt，而是一次状态写入", "id": "第一跳goal-不是一条-prompt而是一次状态写入"}, {"text": "续跑靠“线程空闲”事件，而不是拦住模型的退出", "id": "续跑靠线程空闲事件而不是拦住模型的退出"}, {"text": "continuation.md 逐段解读：每一轮都重新钉住目标和完成标准", "id": "continuationmd-逐段解读每一轮都重新钉住目标和完成标准"}, {"text": "其余 prompt：预算收尾、改写目标、工具描述和返回给模型的文字", "id": "其余-prompt预算收尾改写目标工具描述和返回给模型的文字"}, {"text": "三个工具划清权力：模型能宣布完成，不能给自己续命", "id": "三个工具划清权力模型能宣布完成不能给自己续命"}, {"text": "刹车装在代码里：计量、预算和“连续 3 次”", "id": "刹车装在代码里计量预算和连续-3-次"}, {"text": "六个状态，以及谁有权拨动它们", "id": "六个状态以及谁有权拨动它们"}, {"text": "边界与安全：目标文本是数据，不是指令", "id": "边界与安全目标文本是数据不是指令"}, {"text": "这样设计对 agent 效果的好处，以及它没解决的问题", "id": "这样设计对-agent-效果的好处以及它没解决的问题"}], "file": "codex_goal_dataflow_design.html"}, {"title": "开源 Agent 的 /goal 实现深挖：prompt 原文、状态机与防死循环", "title_html": "开源 Agent 的 <code>/goal<\/code> 实现深挖：prompt 原文、状态机与防死循环", "kicker": "源码拆解", "deck": "逐个拆开 Codex、Qwen Code、Hermes、OpenHands、opencode 家族、Claude Code 生态、Goose、Cline 和 Ralph 外循环：下一轮从哪来、谁判定完成、怎么防止停不下来。", "meta": ["源码快照 2026-11-18", "Codex · Qwen · Hermes · OpenHands · opencode · Kilo · Claude Code · Goose · Cline"], "sections": ["所有 /goal 共用一个骨架：存目标、跑一轮、判定、再注入", "Codex CLI：/goal 不是 prompt，而是一行 SQLite 记录", "Qwen Code：模型只能提议完成，独立 Verifier 拍板", "Hermes 与 OpenHands：每轮结束后外挂一个裁判", "OpenCode 家族：同一个空闲时刻，三种完全不同的做法", "Claude Code 生态：一切都建在 Stop hook 的 block 上", "最轻的几种：Goose 的提示、Cline 的追问、外部 bash 循环", "横向对比：状态集合、判定者、存储、触发与护栏", "怎样做一个可靠的 /goal：从这些实现里学到的八条"], "chars": 22688, "minutes": 62, "updated": "2026-11-18", "created": "2026-11-18", "links": [{"text": "所有 /goal 共用一个骨架：存目标、跑一轮、判定、再注入", "id": "所有-goal-共用一个骨架存目标跑一轮判定再注入"}, {"text": "Codex CLI：/goal 不是 prompt，而是一行 SQLite 记录", "id": "codex-cligoal-不是-prompt而是一行-sqlite-记录"}, {"text": "Qwen Code：模型只能提议完成，独立 Verifier 拍板", "id": "qwen-code模型只能提议完成独立-verifier-拍板"}, {"text": "Hermes 与 OpenHands：每轮结束后外挂一个裁判", "id": "hermes-与-openhands每轮结束后外挂一个裁判"}, {"text": "OpenCode 家族：同一个空闲时刻，三种完全不同的做法", "id": "opencode-家族同一个空闲时刻三种完全不同的做法"}, {"text": "Claude Code 生态：一切都建在 Stop hook 的 block 上", "id": "claude-code-生态一切都建在-stop-hook-的-block-上"}, {"text": "最轻的几种：Goose 的提示、Cline 的追问、外部 bash 循环", "id": "最轻的几种goose-的提示cline-的追问外部-bash-循环"}, {"text": "横向对比：状态集合、判定者、存储、触发与护栏", "id": "横向对比状态集合判定者存储触发与护栏"}, {"text": "怎样做一个可靠的 /goal：从这些实现里学到的八条", "id": "怎样做一个可靠的-goal从这些实现里学到的八条"}], "file": "open_source_agent_goal_deep_dive.html"}, {"title": "开源 Agent 的 /goal 是怎么实现的：从 Ralph 死循环到内核级目标状态机", "title_html": "开源 Agent 的 <code>/goal<\/code> 是怎么实现的：从 Ralph 死循环到内核级目标状态机", "kicker": "架构拆解", "deck": "基于 Claude Code ralph-loop、snarktank/ralph、open-ralph-wiggum、oh-my-claudecode、oh-my-opencode、Prime Agent 与 DeepSeek Harness 的真实源码与提示词原文，拆解开源 Agent 如何拦截过早退出、持久化目标状态、校验完成声明，以及防止死循环和越权。", "meta": ["7 个开源项目源码对照", "源码与提示词原文"], "sections": ["先看全貌：让 Agent 不半途而废的四种架构", "Claude Code ralph-loop：用 Stop Hook 把退出拦在门内", "外循环与清零上下文：snarktank/ralph 与 open-ralph-wiggum", "从暗号到状态机：oh-my-claudecode 与 oh-my-opencode 的演进", "Prime Agent：把 Goal 写进 Rust 会话内核", "DeepSeek Harness：事件溯源、CAS 锁与权限隔离", "横向对比：七种开源实现的关键工程决策", "小结：实现一个可靠的 /goal 必须解决的五个问题"], "chars": 10767, "minutes": 37, "updated": "2026-11-18", "created": "2026-11-18", "links": [{"text": "先看全貌：让 Agent 不半途而废的四种架构", "id": "先看全貌让-agent-不半途而废的四种架构"}, {"text": "Claude Code ralph-loop：用 Stop Hook 把退出拦在门内", "id": "claude-code-ralph-loop用-stop-hook-把退出拦在门内"}, {"text": "外循环与清零上下文：snarktank/ralph 与 open-ralph-wiggum", "id": "外循环与清零上下文snarktankralph-与-open-ralph-wiggum"}, {"text": "从暗号到状态机：oh-my-claudecode 与 oh-my-opencode 的演进", "id": "从暗号到状态机oh-my-claudecode-与-oh-my-opencode-的演进"}, {"text": "Prime Agent：把 Goal 写进 Rust 会话内核", "id": "prime-agent把-goal-写进-rust-会话内核"}, {"text": "DeepSeek Harness：事件溯源、CAS 锁与权限隔离", "id": "deepseek-harness事件溯源cas-锁与权限隔离"}, {"text": "横向对比：七种开源实现的关键工程决策", "id": "横向对比七种开源实现的关键工程决策"}, {"text": "小结：实现一个可靠的 /goal 必须解决的五个问题", "id": "小结实现一个可靠的-goal-必须解决的五个问题"}], "file": "open_source_agent_goal_visual_guide.html"}, {"title": "Pi、Prime Agent 与 Codex CLI 的定时循环：三种把消息送回对话的方法", "title_html": "Pi、Prime Agent 与 Codex CLI 的定时循环：三种把消息送回对话的方法", "kicker": "源码拆解", "deck": "对照 Claude Code 的 /loop，拆解 pi-loop 插件、Prime Agent 心跳和 Codex CLI 的 cronex，看它们怎样选择插入时机、防止消息堆积、让会话保持存活。", "meta": ["pi-loop · Prime Agent · cronex", "源码与提示词原文"], "sections": ["先看结论：定时消息只有两个插入点", "pi-loop：插件怎么教模型建循环", "pi-loop：到期后消息怎么送到模型面前", "Prime Agent：心跳是 REPL 里的一个函数", "Prime Agent：心跳到期后的五步", "cronex：给没有调度器的 Codex 补上定时", "cronex：两条通道把消息送进会话", "pr-loop：一周长的任务怎么排", "四种实现放在一起对比", "小结：选插入点，就是在及时和稳定之间取舍"], "chars": 7742, "minutes": 27, "updated": "2026-11-17", "created": "2026-11-17", "links": [{"text": "先看结论：定时消息只有两个插入点", "id": "先看结论定时消息只有两个插入点"}, {"text": "pi-loop：插件怎么教模型建循环", "id": "pi-loop插件怎么教模型建循环"}, {"text": "pi-loop：到期后消息怎么送到模型面前", "id": "pi-loop到期后消息怎么送到模型面前"}, {"text": "Prime Agent：心跳是 REPL 里的一个函数", "id": "prime-agent心跳是-repl-里的一个函数"}, {"text": "Prime Agent：心跳到期后的五步", "id": "prime-agent心跳到期后的五步"}, {"text": "cronex：给没有调度器的 Codex 补上定时", "id": "cronex给没有调度器的-codex-补上定时"}, {"text": "cronex：两条通道把消息送进会话", "id": "cronex两条通道把消息送进会话"}, {"text": "pr-loop：一周长的任务怎么排", "id": "pr-loop一周长的任务怎么排"}, {"text": "四种实现放在一起对比", "id": "四种实现放在一起对比"}, {"text": "小结：选插入点，就是在及时和稳定之间取舍", "id": "小结选插入点就是在及时和稳定之间取舍"}], "file": "pi_and_codex_loop_visual_guide.html"}, {"title": "各家模型的 thinking 模式：参数、回传规则与最佳实践", "title_html": "各家模型的 thinking 模式：参数、回传规则与最佳实践", "kicker": "对照整理", "deck": "汇总 Anthropic、OpenAI、Google、DeepSeek、Qwen 官方文档（截至 2026-11-23）对 thinking 的控制方式、可见性、工具循环中的回传规则、缓存影响和官方建议，再用三篇“想多想少”的研究给出 agent 场景下的选择方法。", "meta": ["官方文档截至 2026-11-23", "5 家厂商 · 3 篇论文", "面向 agent harness"], "sections": ["thinking 决定了什么：一次请求里花多少推理算力", "Anthropic Claude：adaptive 加 effort，改配置会让缓存失效", "OpenAI：effort 与 mode 分开，reasoning item 决定连续性", "Google Gemini：thinkingLevel 取代 budget，signature 必须带回", "DeepSeek 与 Qwen：原文可见，回传规则看有没有工具", "横向对比：五家在四个维度上的差异", "研究怎么说：想多和想少一样会失败", "落到 agent harness：怎么选、怎么接"], "chars": 9602, "minutes": 15, "updated": "2026-11-23", "created": "2026-11-23 16:34", "links": [{"text": "thinking 决定了什么：一次请求里花多少推理算力", "id": "thinking-决定了什么一次请求里花多少推理算力"}, {"text": "Anthropic Claude：adaptive 加 effort，改配置会让缓存失效", "id": "anthropic-claudeadaptive-加-effort改配置会让缓存失效"}, {"text": "OpenAI：effort 与 mode 分开，reasoning item 决定连续性", "id": "openaieffort-与-mode-分开reasoning-item-决定连续性"}, {"text": "Google Gemini：thinkingLevel 取代 budget，signature 必须带回", "id": "google-geminithinkinglevel-取代-budgetsignature-必须带回"}, {"text": "DeepSeek 与 Qwen：原文可见，回传规则看有没有工具", "id": "deepseek-与-qwen原文可见回传规则看有没有工具"}, {"text": "横向对比：五家在四个维度上的差异", "id": "横向对比五家在四个维度上的差异"}, {"text": "研究怎么说：想多和想少一样会失败", "id": "研究怎么说想多和想少一样会失败"}, {"text": "落到 agent harness：怎么选、怎么接", "id": "落到-agent-harness怎么选怎么接"}], "file": "thinking_mode_best_practices.html"}]</script>
 <script>
 (function () {
   var root = document.documentElement;
@@ -158,10 +181,12 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
   var latest = data.map(function (a) { return a.updated; }).sort().pop() || '';
   document.querySelector('[data-summary]').textContent = '共 ' + data.length + ' 篇' + (latest ? ' · 最近更新 ' + latest : '');
 
-  function tagsOf(a) { return [a.kicker].concat(a.meta || []).filter(Boolean); }
+  // articles without a created date fall back to their updated date
+  function created(a) { return a.created || a.updated || ''; }
+  function tagsOf(a) { return [a.kicker].filter(Boolean); }
   var tagCount = {};
   data.forEach(function (a) { tagsOf(a).forEach(function (t) { tagCount[t] = (tagCount[t] || 0) + 1; }); });
-  var tags = Object.keys(tagCount).filter(function (t) { return tagCount[t] > 1 || data.length <= 3; });
+  var tags = Object.keys(tagCount).sort(function (x, y) { return tagCount[y] - tagCount[x]; });
   ['全部'].concat(tags).forEach(function (t, i) {
     var b = document.createElement('button');
     b.type = 'button'; b.className = 'tag'; b.textContent = t; b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
@@ -192,20 +217,23 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
     list.sort(function (x, y) {
       if (key === 'title') return x.title.localeCompare(y.title, 'zh');
       if (key === 'length') return (y.chars || 0) - (x.chars || 0);
+      if (key === 'created') return created(y).localeCompare(created(x)) || (y.updated || '').localeCompare(x.updated || '');
       return (y.updated || '').localeCompare(x.updated || '');
     });
     grid.innerHTML = list.map(function (a) {
       var secMatch = q && (a.sections || []).some(function (s) { return s.toLowerCase().indexOf(q) >= 0; });
       var title = q ? hit(a.title, q) : (a.title_html || esc(a.title));
-      return '<article class="card">' +
-        (a.kicker ? '<div class="card-kicker">' + esc(a.kicker) + '</div>' : '') +
-        '<h2><a href="' + esc(a.file) + '">' + title + '</a></h2>' +
+      var day = created(a).slice(0, 10);
+      return '<article class="card"><div class="card-side">' + esc(day) +
+          (a.kicker ? '<span class="card-kicker">' + esc(a.kicker) + '</span>' : '') + '</div>' +
+        '<div class="card-main"><h2><a href="' + esc(a.file) + '">' + title + '</a></h2>' +
         (a.deck ? '<p class="deck">' + hit(a.deck, q) + '</p>' : '') +
-        '<div class="chips">' + (a.meta || []).map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('') +
-          '<span>约 ' + a.minutes + ' 分钟</span><span>更新于 ' + esc(a.updated) + '</span></div>' +
-        '<details' + (secMatch ? ' open' : '') + '><summary>' + (a.links || []).length + ' 个章节 · ' + esc(a.file) + '</summary><ol>' +
-          (a.links || []).map(function (l) { return '<li><a href="' + esc(a.file) + '#' + encodeURIComponent(l.id) + '">' + hit(l.text, q) + '</a></li>'; }).join('') +
-        '</ol></details></article>';
+        '<p class="info"><span>约 ' + a.minutes + ' 分钟</span>' +
+          (a.updated && a.updated !== day ? '<span>更新于 ' + esc(a.updated) + '</span>' : '') +
+          (a.meta || []).map(function (m) { return '<span>' + hit(m, q) + '</span>'; }).join('') + '</p>' +
+        ((a.links || []).length ? '<details' + (secMatch ? ' open' : '') + '><summary>' + a.links.length + ' 个章节</summary><ol>' +
+          a.links.map(function (l) { return '<li><a href="' + esc(a.file) + '#' + encodeURIComponent(l.id) + '">' + hit(l.text, q) + '</a></li>'; }).join('') +
+        '</ol></details>' : '') + '</div></article>';
     }).join('');
     empty.hidden = list.length > 0;
     if (!list.length) empty.querySelector('[data-empty-msg]').textContent =

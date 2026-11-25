@@ -8,6 +8,7 @@ meta:
 footer: 主要来源：OpenAI 工程博客《Unrolling the Codex agent loop》（2026-01-23）、《Unlocking the Codex harness》（2026-02-04）、《Harness engineering》（2026-02-11）、《Symphony》（2026-04-27）、《How enabling two settings tripled our scores on ARC-AGI-3》（2026-07-29）、《Inside the Codex sandbox》（2026-11-18）；developers.openai.com/blog；learn.chatgpt.com/docs；github.com/openai/codex @ 4389a52（2026-11-18）。
 index: index.html
 updated: 2026-11-20
+created: 2026-11-20
 ---
 
 Codex 的“产品”很多：CLI、IDE 扩展、并入 ChatGPT 桌面应用的 Codex、Web 上的 Codex cloud、`codex exec`、SDK。OpenAI 在 2026 年连发的几篇工程博客反复强调同一件事：这些界面背后是**同一个开源 harness**，即负责 agent 循环、上下文、工具执行、沙箱与审批的那一层。本文按这层 harness 的结构拆解 Codex，所有结论都对照了 `openai/codex` 源码（HEAD `4389a52`，2026-11-18）。

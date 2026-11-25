@@ -1,0 +1,1189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>给 dsh 写插件：从 apply(ctx) 到打包安装</title>
+<meta name="description" content="dsh 插件就是一个 Cordis 模块，交付时再包成声明了 dsh.bundle 的 npm 包。本文按官方教程的顺序走完“写插件 → 注册工具 → 挂钩子 → 打包 → 安装 → 叠配置”，每一步都区分仓库原文和实际运行结果，并列出文档与实际行为不符的地方：被拒绝的调用照样走完 post-execute 和 res…">
+<script type="application/json" id="article-meta">{"title": "给 dsh 写插件：从 apply(ctx) 到打包安装", "title_html": "给 dsh 写插件：从 <code>apply(ctx)<\/code> 到打包安装", "kicker": "插件开发", "deck": "dsh 插件就是一个 Cordis 模块，交付时再包成声明了 dsh.bundle 的 npm 包。本文按官方教程的顺序走完“写插件 → 注册工具 → 挂钩子 → 打包 → 安装 → 叠配置”，每一步都区分仓库原文和实际运行结果，并列出文档与实际行为不符的地方：被拒绝的调用照样走完 post-execute 和 result，配置是四类层而不是五层，构建授权必须写 pnpm 打印的完整键，漏写 peer 的插件能装上却在启动时 import 失败。", "meta": ["deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）", "@deepseek-ai/dsh 0.2.2-rc.5 CLI · 仓库 0.2.3-alpha.2", "@deepseek-ai/cordis 4.2.0-alpha.1", "pnpm 10.34.9 与 11.28.5 实测"], "sections": ["插件是一个带 apply 的 Cordis 模块，inject 决定它何时运行", "官方教程四步：从一行日志到带配置的 greet 工具", "一次工具调用经过五个扩展点，被拒绝的调用也走到最后", "监听事件与打日志：session/event、ctx.logger 和不存在的 dispose 事件", "bundle 和 profile：dsh plugin 是 pnpm 外面的一层薄包装", "配置是四类层，patch 只替换写出来的 config 键", "从 git 安装：要授权构建脚本，而且必须写 pnpm 打印的完整键", "发布到 npm：用 engines.dsh 声明兼容，peer 只用来共享宿主实例", "综合练习：一个带配置、工具、闸门和审计日志的 bundle", "文档与实际行为的出入，以及没有验证的部分"], "chars": 18311, "minutes": 34, "updated": "2026-11-23", "created": "2026-11-23 18:04"}</script>
+<script>(function(){var d=document.documentElement,c=null;try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')d.setAttribute('data-theme',t);c=localStorage.getItem('tech-article-toc')}catch(e){}var n=matchMedia('(max-width: 1100px)').matches;d.setAttribute('data-toc',!n&&c!=='closed'?'open':'closed')})();</script>
+<style>
+:root {
+  --bg: #f5f4ed; --surface: #faf9f5; --sunken: #f0eee6;
+  --ink: #141413; --ink-2: #2c2c29; --muted: #504e49; --faint: #6b6a64; --tick: #85837b;
+  --line: #e8e6dc; --line-strong: #d8d5c8;
+  --accent: #1B365D; --accent-soft: #EEF2F7;
+  --code-bg: #181816; --code-head: #22221f; --code-ink: #ece8da; --code-line: #30302e;
+  --prompt-bg: #faf9f5; --prompt-ink: #141413; --diagram-bg: #f5f4ed;
+  --pr-h: #1B365D; --pr-b: #141413;
+  --hl: #E4ECF5; --hl-amber: #f0e0d8;
+  --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 8px 24px rgb(20 20 19 / 0.05);
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Noto Sans CJK SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+    --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e; --tick: #6e6c64;
+    --line: #2e2d2a; --line-strong: #403f3c;
+    --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+    --code-bg: #10100f; --code-head: #191917; --code-line: #2a2926;
+    --prompt-bg: #1a1917; --prompt-ink: #dedad0; --diagram-bg: #f5f4ed;
+    --pr-h: #9bb8dc; --pr-b: #f2f0ea;
+    --hl: rgb(155 184 220 / 0.15); --hl-amber: rgb(217 180 138 / 0.16);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+  --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e; --tick: #6e6c64;
+  --line: #2e2d2a; --line-strong: #403f3c;
+  --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+  --code-bg: #10100f; --code-head: #191917; --code-line: #2a2926;
+  --prompt-bg: #1a1917; --prompt-ink: #dedad0; --diagram-bg: #f5f4ed;
+  --pr-h: #9bb8dc; --pr-b: #f2f0ea;
+  --hl: rgb(155 184 220 / 0.15); --hl-amber: rgb(217 180 138 / 0.16);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 1rem/1.75 var(--sans); -webkit-font-smoothing: antialiased;
+  text-autospace: ideograph-alpha ideograph-numeric;
+}
+a { color: var(--accent); text-decoration: none; }
+@media (hover: hover) { a:hover { text-decoration: underline; text-underline-offset: 3px; } }
+strong { font-weight: 650; color: var(--ink); }
+:not(pre) > code {
+  padding: 0.08em 0.3em; border-radius: 4px;
+  background: color-mix(in srgb, var(--sunken) 70%, transparent); color: var(--ink);
+  font: 0.86em/1 var(--mono); letter-spacing: 0;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+
+.skip {
+  position: absolute; left: 16px; top: -48px; z-index: 90; padding: 8px 14px; border-radius: 8px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font-size: 0.875rem;
+}
+.skip:focus { top: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* progress + sidebar table of contents */
+.progress { position: fixed; inset: 0 0 auto 0; height: 2px; z-index: 60; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
+.toc-toggle {
+  position: fixed; left: 16px; top: 16px; z-index: 56;
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .toc-toggle:hover { color: var(--ink); border-color: var(--line-strong); } }
+.toc-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toc {
+  position: fixed; left: 0; top: 0; bottom: 0; z-index: 55; width: 272px;
+  padding: 60px 12px 32px 16px; overflow-y: auto; overscroll-behavior: contain;
+  border-right: 1px solid var(--line); background: var(--bg);
+}
+:root[data-toc="closed"] .toc { display: none; }
+.toc-head { margin: 0 0 6px 12px; font: 600 0.6875rem/1 var(--mono); letter-spacing: .14em; color: var(--faint); }
+.toc-title { margin: 0 0 18px 12px; padding-bottom: 16px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 0.875rem; font-weight: 600; line-height: 1.5; }
+.toc-list { margin: 0; padding: 0; list-style: none; }
+.toc-list a {
+  display: flex; gap: 10px; padding: 5px 10px; border-left: 2px solid var(--line); border-radius: 0;
+  color: var(--muted); font-size: 0.84375rem; line-height: 1.5; transition: color .15s ease, border-color .15s ease;
+}
+.toc-list a .num { flex: none; min-width: 1.6em; font-family: var(--mono); font-size: 0.6875rem; font-weight: 500; line-height: 20px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.toc-list a.lv2 { padding-top: 8px; padding-bottom: 8px; color: var(--ink-2); font-weight: 500; }
+.toc-list a.lv3 { padding: 3px 10px 3px 38px; font-size: 0.78125rem; }
+.toc-list a.lv3 .num { display: none; }
+/* subsections show only under the section being read */
+.toc-list li.sub:not(.in-sec) { display: none; }
+@media (hover: hover) { .toc-list a:hover { color: var(--ink); text-decoration: none; } }
+.toc-list a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.toc-list a.lv2.is-sec { color: var(--ink); font-weight: 600; }
+.toc-list a.is-sec .num { color: var(--accent); }
+.toc-list a.is-active { border-left-color: var(--accent); color: var(--ink); }
+.toc-list a.lv3.is-active { font-weight: 500; }
+
+/* page */
+.page { max-width: 1760px; margin: 0 auto; padding: 0 56px 120px 96px; }
+@media (min-width: 1101px) {
+  :root:not([data-toc="closed"]) .page { padding-left: 328px; }
+}
+/* with the sidebar open the content column is 232px narrower, so stack earlier */
+@media (min-width: 1101px) and (max-width: 1552px) {
+  :root:not([data-toc="closed"]) .row { display: block; }
+  :root:not([data-toc="closed"]) .row-text { max-width: 720px; }
+  :root:not([data-toc="closed"]) .row-media { position: static; margin-top: 18px; }
+}
+.masthead { padding: 56px 0 40px; border-bottom: 1px solid var(--line); }
+.masthead-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.back { font-size: 0.8125rem; color: var(--muted); }
+@media (hover: hover) { .back:hover { color: var(--accent); text-decoration: none; } }
+.masthead-left { display: flex; align-items: center; gap: 14px; }
+.kicker { margin: 0; font: 600 0.75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); } }
+h1 {
+  max-width: 1040px; margin: 18px 0 14px;
+  font-size: clamp(1.75rem, 3.2vw, 2.75rem); line-height: 1.18; font-weight: 700; letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h1 code { padding: 0; background: none; font: inherit; font-family: var(--mono); font-size: 0.92em; color: var(--accent); }
+.deck { max-width: 820px; margin: 0; color: var(--ink-2); font-size: 1.125rem; line-height: 1.65; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.meta span {
+  padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font: 0.78125rem/1.6 var(--sans); font-variant-numeric: tabular-nums;
+}
+
+/* sections */
+.content { counter-reset: sec; }
+.sec { padding-top: 88px; }
+.sec + .sec { margin-top: 32px; border-top: 1px solid var(--line); }
+.sec > h2 {
+  counter-increment: sec; position: relative;
+  max-width: 1040px; margin: 0 0 36px;
+  font-size: clamp(1.5rem, 2.2vw, 2rem); line-height: 1.3; font-weight: 700; letter-spacing: -0.01em;
+  text-wrap: balance; scroll-margin-top: 28px;
+}
+.sec > h2::before {
+  content: counter(sec, decimal-leading-zero) var(--sec-of, ""); display: block; margin-bottom: 14px;
+  font: 600 0.8125rem/1 var(--mono); letter-spacing: .08em; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+h2 code, h3 code { padding: 0; background: none; color: var(--accent); font-size: 0.86em; font-weight: 600; }
+h3 { margin: 0 0 12px; font-size: 1.1875rem; line-height: 1.45; font-weight: 650; scroll-margin-top: 28px; }
+.anchor { margin-left: 8px; color: var(--muted); font-weight: 400; opacity: 0; }
+@media (hover: hover) { h2:hover .anchor, h3:hover .anchor { opacity: 1; text-decoration: none; } }
+.anchor:focus-visible { opacity: 1; text-decoration: none; }
+
+.intro { padding-top: 40px; }
+.intro > p { max-width: 720px; margin: 0 0 20px; color: var(--ink-2); }
+.points { display: grid; max-width: 1040px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; margin: 8px 0 0; padding: 0; list-style: none; }
+.points li { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink-2); font-size: 0.90625rem; line-height: 1.65; }
+.points li > code.fn-name { display: inline-block; margin-bottom: 8px; padding: 0; background: none; color: var(--accent); font-size: 0.8125rem; font-weight: 600; }
+.points li > span { display: block; }
+@media (min-width: 700px) {
+  .points { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .points:has(> li:nth-child(3):last-child, > li:nth-child(6):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* text | media rows */
+.row {
+  display: grid; grid-template-columns: minmax(340px, min(40%, 600px)) minmax(0, 1fr);
+  gap: 0 clamp(32px, 3.5vw, 56px); align-items: start; margin: 0 0 40px;
+}
+.row + .row:has(> .row-text > h3:first-child) { margin-top: 64px; }
+.row-text > :first-child { margin-top: 0; }
+.row-text > :last-child { margin-bottom: 0; }
+.row-text p, .row-text ul, .row-text ol { margin: 0 0 16px; color: var(--ink-2); }
+.row-text ul, .row-text ol { padding-left: 1.3em; }
+.row-text li { margin: 6px 0; }
+.row-text li::marker { color: var(--muted); }
+.row-text blockquote {
+  margin: 0 0 16px; padding: 12px 16px; border-left: 2px solid var(--accent);
+  border-radius: 0 8px 8px 0; background: var(--accent-soft); color: var(--ink-2); font-size: 0.9375rem;
+}
+.row-text blockquote p { margin: 0; }
+.row-media { position: sticky; top: 24px; display: grid; gap: 20px; min-width: 0; }
+.row-only-text { grid-template-columns: minmax(0, 720px); }
+.row-only-text > .row-media { display: none; }
+.row-wide { display: block; margin: 0 0 48px; }
+
+/* panels */
+.panel { margin: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); position: relative; }
+.panel-head {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--line); font: 0.75rem/1.4 var(--mono); color: var(--muted);
+}
+.panel-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.panel-lang { flex: none; color: var(--muted); }
+.panel-btn {
+  flex: none; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: inherit; font: 0.75rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .panel-btn:hover { border-color: var(--line); color: var(--ink); } }
+.panel-body { max-height: 560px; overflow: auto; }
+.panel-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panel.is-collapsible:not(.expanded) .panel-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent 100%);
+}
+.panel.expanded .panel-body { max-height: none; }
+.panel pre { margin: 0; padding: 16px 18px; font: 0.78125rem/1.7 var(--mono); letter-spacing: 0; tab-size: 4; }
+.panel pre code { font: inherit; }
+.panel-expand {
+  display: block; width: 100%; height: 34px; border: 0; border-top: 1px solid var(--line);
+  background: var(--surface); color: var(--accent); font: 0.78125rem var(--sans); cursor: pointer;
+}
+.panel-expand[hidden] { display: none; }
+
+.panel-code { background: var(--code-bg); border-color: var(--code-line); }
+.panel-code .panel-head { background: var(--code-head); border-color: var(--code-line); color: #a8a49a; }
+.panel-code .panel-lang { color: #a8a49a; }
+@media (hover: hover) { .panel-code .panel-btn:hover { border-color: #403f3c; color: #ece8da; } }
+.panel-code .panel-body:focus-visible { outline-color: #9bb8dc; }
+.panel-code .panel-expand { background: var(--code-head); border-color: var(--code-line); color: #9bb8dc; }
+.panel-code pre { color: var(--code-ink); white-space: pre; }
+.panel-code .kw { color: #ff7b72; }
+.panel-code .fn { color: #d2a8ff; }
+.panel-code .str { color: #a5d6ff; }
+.panel-code :is(.cm, .cmt) { color: #a8a49a; }
+.panel-code .num { color: #79c0ff; }
+.panel-code :is(.ty, .typ) { color: #ffa657; }
+.panel-code :is(.hl-line, .hl-amber) { display: inline-block; min-width: 100%; margin: 0 -18px; padding: 0 18px; box-sizing: content-box; }
+.panel-code .hl-line { background: rgb(56 139 253 / 0.16); box-shadow: inset 2px 0 0 #58a6ff; }
+.panel-code .hl-amber { background: rgb(210 153 34 / 0.18); box-shadow: inset 2px 0 0 #d29922; }
+
+/* highlight.js tokens for plain code (hand-tokenised code keeps its own spans) */
+.panel-code .hljs-keyword, .panel-code .hljs-selector-tag, .panel-code .hljs-doctag { color: #ff7b72; }
+.panel-code .hljs-title, .panel-code .hljs-title.function_, .panel-code .hljs-section { color: #d2a8ff; }
+.panel-code .hljs-string, .panel-code .hljs-regexp, .panel-code .hljs-template-variable { color: #a5d6ff; }
+.panel-code .hljs-comment, .panel-code .hljs-quote, .panel-code .hljs-meta { color: #a8a49a; }
+.panel-code .hljs-number, .panel-code .hljs-literal, .panel-code .hljs-attr, .panel-code .hljs-variable, .panel-code .hljs-property, .panel-code .hljs-symbol { color: #79c0ff; }
+.panel-code .hljs-type, .panel-code .hljs-built_in, .panel-code .hljs-title.class_, .panel-code .hljs-params { color: #ffa657; }
+.panel-code .hljs-addition { color: #aff5b4; background: rgb(46 160 67 / 0.15); }
+.panel-code .hljs-deletion { color: #ffdcd7; background: rgb(248 81 73 / 0.15); }
+
+.panel-prompt { background: var(--prompt-bg); }
+.panel-prompt .panel-head { background: var(--sunken); }
+.panel-prompt pre { color: var(--prompt-ink); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78125rem; line-height: 1.75; }
+.panel-prompt .pr-h { color: var(--pr-h); font-weight: 700; }
+.panel-prompt .pr-b { color: var(--pr-b); font-weight: 650; }
+.panel-prompt :is(.cm, .cmt) { color: var(--muted); }
+.panel-prompt .kw, .panel-prompt .fn, .panel-prompt .num, .panel-prompt :is(.ty, .typ) { color: inherit; }
+.panel-prompt .str { color: inherit; }
+.panel-prompt :is(.hl-line, .hl-amber) { display: inline; padding: 1px 0; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.panel-prompt .hl-line { background: var(--hl); }
+.panel-prompt .hl-amber { background: var(--hl-amber); }
+
+.panel-diagram:not(.zoom-dialog) { border: 0; border-radius: 0; background: none; box-shadow: none; }
+.panel-diagram:not(.zoom-dialog) .panel-head { min-height: 0; padding: 0 0 10px; border: 0; background: none; color: var(--muted); }
+.panel-diagram .panel-body { max-height: none; padding: 16px; border-radius: 10px; cursor: zoom-in; }
+.panel-diagram:not(.zoom-dialog).dark .panel-body { background: #0c1220; }
+.panel-diagram.light .panel-body {
+  background:
+    linear-gradient(to right, var(--diagram-bg) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--diagram-bg) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.14), transparent) left / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.14), transparent) right / 14px 100% no-repeat scroll,
+    var(--diagram-bg);
+}
+
+.zoom-dialog.panel-diagram.dark { background: #0c1220; border-color: #1e293b; }
+.zoom-dialog.panel-diagram.dark .panel-head { background: #0f172a; border-color: #1e293b; color: #94a3b8; }
+.panel-diagram svg { display: block; width: 100%; height: auto; min-width: 600px; letter-spacing: 0; }
+.panel-diagram.light svg { font-family: var(--sans); }
+.panel-diagram.wide svg { min-width: 920px; }
+.zoom-dialog { width: calc(100% - 48px); max-width: none; height: calc(100% - 48px); max-height: none; padding: 0; color: var(--ink); }
+.zoom-dialog[open] { display: flex; flex-direction: column; }
+.zoom-dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+.zoom-dialog .panel-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; cursor: zoom-out; }
+.zoom-dialog :is(svg, img) { display: block; width: 100%; height: 100%; min-width: 0; max-width: none !important; object-fit: contain; }
+
+/* table */
+.row-wide .table-wrap {
+  overflow-x: auto; border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink);
+  /* edge shadows appear only while more columns sit past the scroll edge */
+  background:
+    linear-gradient(to right, var(--bg) 30%, transparent) left / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--bg) 30%, transparent) right / 40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--ink) 30%, transparent), transparent) left / 16px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--ink) 30%, transparent), transparent) right / 16px 100% no-repeat scroll,
+    var(--bg);
+}
+table { width: 100%; min-width: 880px; border-collapse: collapse; font-size: 0.875rem; line-height: 1.65; font-variant-numeric: tabular-nums; }
+th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; color: var(--ink-2); }
+th { position: sticky; top: 0; background: var(--bg); border-bottom-color: var(--ink-2); color: var(--ink); font-weight: 650; font-size: 0.8125rem; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); color: var(--ink); white-space: nowrap; box-shadow: 1px 0 0 var(--line); }
+th:first-child { position: sticky; left: 0; z-index: 2; box-shadow: 1px 0 0 var(--line); }
+:is(td, th, .points li) code { padding: 0; background: none; color: var(--ink); font-weight: 500; }
+td code, th code { white-space: normal; }
+
+.foot { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
+
+/* stack once the media column would drop below ~634px: a 600px-min diagram plus its padding */
+@media (max-width: 1320px) {
+  .row { display: block; }
+  .row-text { max-width: 720px; }
+  .row-media { position: static; margin-top: 18px; }
+}
+@media (max-width: 1100px) {
+  .toc { box-shadow: var(--shadow); }
+  .page { padding: 0 28px 96px 72px; }
+}
+@media (max-width: 640px) {
+  .toc { width: min(320px, 86vw); }
+  table { min-width: 680px; }
+  td:first-child, th:first-child { position: static; box-shadow: none; }
+  td:first-child { white-space: normal; }
+  .page { padding: 0 16px 72px; }
+  .masthead { padding-top: 60px; }
+  .deck { font-size: 1rem; }
+  .panel-diagram svg { min-width: 560px; }
+}
+@media print {
+  .toc, .toc-toggle, .progress, .theme-toggle, .panel-btn, .panel-expand { display: none !important; }
+  .page, :root:not([data-toc="closed"]) .page { padding: 0; }
+  .row { display: block; }
+  .row-media { position: static; }
+  .panel-body { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">跳到正文</a>
+<div class="progress" aria-hidden="true"></div>
+<button type="button" class="toc-toggle" aria-controls="toc" aria-expanded="true">收起目录</button>
+<nav class="toc" id="toc" aria-label="目录">
+  <p class="toc-head">目录</p>
+  <p class="toc-title" data-toc-title></p>
+  <ol class="toc-list"></ol>
+</nav>
+<div class="page">
+  <header class="masthead">
+    <div class="masthead-top">
+      <div class="masthead-left"><a class="back" href="index.html">← 全部文章</a><p class="kicker">插件开发</p></div>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换明暗主题">◐ 主题</button>
+    </div>
+    <h1>给 dsh 写插件：从 <code>apply(ctx)</code> 到打包安装</h1>
+    <p class="deck">dsh 插件就是一个 Cordis 模块，交付时再包成声明了 dsh.bundle 的 npm 包。本文按官方教程的顺序走完“写插件 → 注册工具 → 挂钩子 → 打包 → 安装 → 叠配置”，每一步都区分仓库原文和实际运行结果，并列出文档与实际行为不符的地方：被拒绝的调用照样走完 post-execute 和 result，配置是四类层而不是五层，构建授权必须写 pnpm 打印的完整键，漏写 peer 的插件能装上却在启动时 import 失败。</p>
+    <div class="meta"><span>deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）</span><span>@deepseek-ai/dsh 0.2.2-rc.5 CLI · 仓库 0.2.3-alpha.2</span><span>@deepseek-ai/cordis 4.2.0-alpha.1</span><span>pnpm 10.34.9 与 11.28.5 实测</span><span data-reading-time></span><span data-sections></span></div>
+  </header>
+  <main class="content" id="content">
+<section class="intro"><p>dsh（DeepSeek Harness，npm 包 <code>@deepseek-ai/dsh</code>）自称 “everything-is-a-plugin”：模型适配器、工具注册表、会话日志乃至 agent 循环本身都是 Cordis 插件。所以给 dsh 写插件，就是写一个 Cordis 插件，再把它包成一个声明了 <code>dsh.bundle</code> 的 npm 包，用 <code>dsh plugin add</code> 装进某个 profile。</p>
+<p>本文按官方教程的顺序走一遍，每一步都标出证据来源。<strong>仓库原文</strong>：代码或说法摘自 commit <code>4b399c3</code>，标注路径和行号。<strong>本文实测</strong>：本文实际运行过，输出原样贴出。<strong>示意（未运行）</strong>：本文写的代码，没有作为整体运行。插件的生命周期细节见<a href="dsh_lifecycle_and_effects.html">dsh 插件的生命周期与副作用</a>，服务、事件分发模式和 HMR 见<a href="dsh_services_events_config_plugin.html">dsh 的服务、事件、配置与插件实战</a>，本文只讲写插件和装插件需要的部分。</p>
+<ul class="points"><li><strong><code>apply</code> 何时运行只由 <code>inject</code> 决定</strong>：服务全部就绪、<code>Config</code> 同步校验通过才调用；依赖消失后插件回到 PENDING，依赖回来 <code>apply</code> 再跑一次</li><li><strong>一次工具调用的实测顺序</strong>：<code>tools/pre-execute</code> → <code>ctx.tools.guard()</code> → <code>tools/execute</code> 包裹层（参数校验在里面）→ 工具体 → <code>tools/post-execute</code> → <code>tools/result</code>；被拒绝的调用仍会走到 post-execute 和 result</li><li><strong>bundle 最少三个文件</strong>：<code>package.json</code>（含 <code>dsh.bundle.patch</code>）、<code>cordis.patch.yml</code>、入口 JS；<code>dsh plugin</code> 只是在 profile 目录里调用 PATH 上的 pnpm，再对账 bundle 列表</li><li><strong>配置是四类层</strong>：各 bundle patch → profile patch → home patch → 各 <code>--patch</code>；“五层”只是把 <code>dsh-base</code> 单独数成一层</li><li><strong>三个新手最容易踩的坑</strong>：构建授权要写 pnpm 打印的完整键（含 git URL 和 sha）；import 了宿主包却不声明 peer，启动时 <code>ERR_MODULE_NOT_FOUND</code>；照抄官方包的精确 rc peer 会把插件锁死在一个版本上</li></ul></section>
+<section class="sec"><h2>插件是一个带 <code>apply</code> 的 Cordis 模块，<code>inject</code> 决定它何时运行</h2>
+<div class="row"><div class="row-text"><p>官方教程的定义：插件是导出 <code>apply</code> 函数的模块，框架加载时调用 <code>apply</code> 并传入 <code>ctx</code>，插件通过 <code>ctx</code> 注册能力。模块还可以导出三个字段。<code>name</code> 可选，只用于 Fiber 诊断和 logger 命名。<code>inject</code> 列出必需的服务，可以写数组，也可以写“服务名 → 配置”的映射。<code>Config</code> 必须是实现了 Standard Schema 的校验器，dsh 用的是自己 fork 的 Schemastery。Cordis 的 <code>Plugin.Base</code> 还定义了 <code>provide</code> 和 <code>intercept</code>，入门教程没有讲（<code>vendor/cordis/src/registry.ts:97-132</code>）。</p>
+<p>插件有三种写法：函数模块、对象（<code>export default { name, inject, apply }</code>）、继承 <code>Service</code> 的类。文档建议大多数情况用函数形式，只有给别的插件提供服务时才用类（<code>docs/user/develop/basic/index.md:105-138</code>）。</p>
+<p>图 1 是一个插件从被加载到开始工作要过的三道关，以及它在 <code>apply</code> 里能注册的东西。<strong>这些注册全都是挂在插件 Fiber 上的 effect</strong>：插件卸载、配置变化引起热替换、依赖的服务消失时，会被统一撤销，不用手写清理代码。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 1：插件模块的四个导出、apply 被调用前的三道关，以及 apply 里能注册的东西</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 720 340" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="dsh 插件的组成与加载条件">
+<defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#555"/></marker></defs>
+<rect x="20" y="20" width="200" height="164" rx="8" fill="#F4F6F9" stroke="#1B365D" stroke-width="1.2"/>
+<text x="120" y="44" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1a1a1a">插件模块 index.js</text>
+<line x1="34" y1="54" x2="206" y2="54" stroke="#c9ced6"/>
+<text x="36" y="78" font-size="12" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">name</text><text x="206" y="78" text-anchor="end" font-size="11" fill="#555">可选，诊断用</text>
+<text x="36" y="104" font-size="12" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">inject</text><text x="206" y="104" text-anchor="end" font-size="11" fill="#555">必需的服务</text>
+<text x="36" y="130" font-size="12" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">Config</text><text x="206" y="130" text-anchor="end" font-size="11" fill="#555">同步校验器</text>
+<text x="36" y="156" font-size="12" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">apply(ctx, config)</text>
+<line x1="221" y1="100" x2="256" y2="100" stroke="#555" stroke-width="1.3" marker-end="url(#a1)"/>
+<rect x="260" y="20" width="240" height="46" rx="7" fill="#fff" stroke="#1B365D" stroke-width="1.1"/>
+<text x="274" y="39" font-size="12.5" font-weight="600" fill="#1a1a1a">① inject 的服务都在吗</text>
+<text x="274" y="57" font-size="11" fill="#555">否：停在 PENDING(0)，不调用 apply</text>
+<line x1="380" y1="67" x2="380" y2="77" stroke="#555" stroke-width="1.3" marker-end="url(#a1)"/>
+<rect x="260" y="80" width="240" height="46" rx="7" fill="#fff" stroke="#1B365D" stroke-width="1.1"/>
+<text x="274" y="99" font-size="12.5" font-weight="600" fill="#1a1a1a">② Config 同步校验</text>
+<text x="274" y="117" font-size="11" fill="#555">失败：ValidationError；异步校验器直接报错</text>
+<line x1="380" y1="127" x2="380" y2="137" stroke="#555" stroke-width="1.3" marker-end="url(#a1)"/>
+<rect x="260" y="140" width="240" height="46" rx="7" fill="#1B365D"/>
+<text x="274" y="159" font-size="12.5" font-weight="600" fill="#fff">③ 调用 apply(ctx, config)</text>
+<text x="274" y="177" font-size="11" fill="#dfe7f1">进入 ACTIVE(2)</text>
+<rect x="530" y="20" width="170" height="166" rx="7" fill="#F4F6F9" stroke="#9aa3ae" stroke-dasharray="5 4"/>
+<text x="544" y="42" font-size="12.5" font-weight="600" fill="#1a1a1a">某个依赖消失</text>
+<text x="544" y="66" font-size="11" fill="#333">所有 effect 被撤销</text>
+<text x="544" y="86" font-size="11" fill="#333">Fiber 回到 PENDING(0)</text>
+<text x="544" y="106" font-size="11" fill="#333">（不是文档说的 DISPOSED）</text>
+<text x="544" y="134" font-size="11" fill="#333">依赖回来后从 ① 重新走，</text>
+<text x="544" y="154" font-size="11" fill="#333">apply 再执行一次</text>
+<line x1="501" y1="163" x2="526" y2="163" stroke="#555" stroke-width="1.3" marker-end="url(#a1)"/>
+<line x1="529" y1="43" x2="504" y2="43" stroke="#555" stroke-width="1.3" marker-end="url(#a1)"/>
+<line x1="380" y1="187" x2="380" y2="214" stroke="#555" stroke-width="1.3" marker-end="url(#a1)"/>
+<rect x="14" y="218" width="692" height="80" rx="10" fill="none" stroke="#c9ced6" stroke-dasharray="6 5"/>
+<rect x="24" y="230" width="128" height="56" rx="7" fill="#F4F6F9" stroke="#1B365D"/><text x="88" y="253" text-anchor="middle" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">tools.register()</text><text x="88" y="273" text-anchor="middle" font-size="11" fill="#555">给模型用的工具</text>
+<rect x="160" y="230" width="128" height="56" rx="7" fill="#F4F6F9" stroke="#1B365D"/><text x="224" y="253" text-anchor="middle" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">on('tools/…')</text><text x="224" y="273" text-anchor="middle" font-size="11" fill="#555">工具流水线钩子</text>
+<rect x="296" y="230" width="128" height="56" rx="7" fill="#F4F6F9" stroke="#1B365D"/><text x="360" y="253" text-anchor="middle" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">tools.guard()</text><text x="360" y="273" text-anchor="middle" font-size="11" fill="#555">最后一道拒绝</text>
+<rect x="432" y="230" width="128" height="56" rx="7" fill="#F4F6F9" stroke="#1B365D"/><text x="496" y="253" text-anchor="middle" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">on('session/event')</text><text x="496" y="273" text-anchor="middle" font-size="11" fill="#555">会话记录</text>
+<rect x="568" y="230" width="128" height="56" rx="7" fill="#F4F6F9" stroke="#1B365D"/><text x="632" y="253" text-anchor="middle" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">effect()</text><text x="632" y="273" text-anchor="middle" font-size="11" fill="#555">自管的资源</text>
+<text x="20" y="324" font-size="12" fill="#444">虚线框里的注册都是插件 Fiber 的 effect：卸载、热替换、依赖消失时统一撤销。</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><h3>实测：依赖没到时 <code>apply</code> 不跑，依赖消失后回到 PENDING</h3>
+<p>把一个 <code>inject: ['tools']</code> 的插件先挂上去，再挂 <code>dsh-tools</code>，然后把 <code>dsh-tools</code> 的 Fiber 释放、再挂回来。状态值用的是 Cordis 的枚举：PENDING=0、LOADING=1、ACTIVE=2、FAILED=3、DISPOSED=4、UNLOADING=5（<code>vendor/cordis/src/fiber.ts:170-185</code>）。</p>
+<p>输出说明了三件事。第一，<code>tools</code> 不在时插件停在 0，<code>apply</code> 根本没被调用。第二，依赖消失时 effect 被清理，状态<strong>回到 0 而不是 4</strong>；文档 <code>framework/index.md:38</code> 写的是 “ACTIVE → DISPOSED”，但源码注释里 DISPOSED 的含义是“已移除，不能再启动”。第三，依赖回来后 <code>apply</code> 完整地又执行了一次，所以 <code>apply</code> 里不要假设自己只跑一次。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · scratchpad/verify/run2.mjs">本文实测 · scratchpad/verify/run2.mjs</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">import { Context } from '@deepseek-ai/cordis'
+import SessionProjection from '@deepseek-ai/dsh-session-projection'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import Tools from '@deepseek-ai/dsh-tools'
+const root = new Context()
+const p = {
+  name: 'early-plugin', inject: ['tools'],
+  apply(ctx) {
+    console.log('[apply] runs now; ctx.tools =', typeof ctx.tools)
+    ctx.logger.info('hello from ctx.logger')
+    ctx.effect(() =&gt; { console.log('[effect] setup'); return () =&gt; console.log('[effect] cleanup') })
+  },
+}
+const f = root.plugin(p)               // tools not mounted yet
+console.log('state before tools mounted:', f.state)
+await root.plugin(SessionProjection); await root.plugin(SystemPrompt)
+const tf = await root.plugin(Tools)
+await new Promise(r =&gt; setTimeout(r, 10))
+console.log('state after tools mounted:', f.state)
+await tf.dispose()                      // remove the injected service
+await new Promise(r =&gt; setTimeout(r, 10))
+console.log('state after tools disposed:', f.state)
+await root.plugin(Tools); await new Promise(r =&gt; setTimeout(r, 10))
+console.log('state after tools re-mounted:', f.state)</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · node run2.mjs 输出">本文实测 · node run2.mjs 输出</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>state before tools mounted: 0
+[apply] runs now; ctx.tools = object
+[effect] setup
+state after tools mounted: 2
+[effect] cleanup
+state after tools disposed: 0
+[apply] runs now; ctx.tools = object
+[effect] setup
+state after tools re-mounted: 2</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>注意 <code>ctx.logger.info('hello from ctx.logger')</code> 这一行没有任何输出，原因见第 4 节。还有一点：<code>dsh-tools</code> 自己也是插件（<code>class ToolsService extends Service</code>，依赖 <code>systemPrompt</code>，而 <code>systemPrompt</code> 又依赖 <code>sessionProjections</code>），所以 <code>inject: ['tools']</code> 实际等的是一整条依赖链。<code>inject</code> 只保证注册表在，不保证有执行器；没挂 <code>dsh-tool-executor-native</code> 这类执行器时，调用工具会得到 <code>TOOL_EXECUTOR_UNAVAILABLE</code>（<code>packages/core/tools/README.md:75-84</code>）。</p>
+<p>配置校验发生在 <code>apply</code> 之前，而且必须同步：Cordis 调用 <code>Config['~standard'].validate(config)</code>，校验器返回 Promise 就抛 <code>Async config validation is not supported</code>（<code>vendor/cordis/src/fiber.ts:72-91</code>）。Fiber 的六个状态如何转换、effect 的卸载顺序、三条重载路径，见<a href="dsh_lifecycle_and_effects.html">生命周期与副作用</a>。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>官方教程四步：从一行日志到带配置的 greet 工具</h2>
+<div class="row"><div class="row-text"><p>官方的学习顺序是：README 的“从源码运行”→ <code>basic/index.md</code>（第一个插件）→ <code>basic/tool.md</code> → <code>basic/config.md</code> → <code>basic/publish.md</code>，之后才是 framework 文档和 cookbook。源码运行要求 <code>pnpm@11.28.5</code> 和 Node <code>^24.22.3 || &gt;=26.13.1</code>（根 <code>package.json:7-9</code>）。</p>
+<p>本文<strong>没有跑通这条官方路径</strong>：<code>pnpm install</code> 要解析 1444 个包，在 3.9 GB 的临时盘上报 <code>ERR_PNPM_ENOSPC</code>，所以 <code>pnpm dsh web --patch</code> 没有执行。下面的教程代码是仓库原文；它们描述的行为改在一个裸宿主上验证（本节末尾）。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · README.md:29-41 · 从源码运行">仓库原文 · README.md:29-41 · 从源码运行</span><span class="panel-lang">Shell</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-bash">git clone https://github.com/deepseek-ai/deepseek-harness.git
+cd deepseek-harness
+pnpm install
+pnpm run build
+pnpm dsh web</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>第一步：一个只打印日志的插件，用 <code>--patch</code> 叠进配置</h3>
+<p>在仓库根目录建 <code>scratch-plugin/</code>，写一个只打印一行的插件，再写一个 <code>cordis.yml</code> 插入一行，用 <code>pnpm dsh web --patch ./scratch-plugin/cordis.yml</code> 启动，终端里应能看到 <code>[hello-plugin] plugin loaded!</code>，Web UI 在 <code>http://127.0.0.1:3080</code>。</p>
+<p>文档特别强调<strong>路径必须是绝对路径</strong>，因为 patch 文件只贡献配置，不改变 loader 解析模块路径时用的 profile 目录（<code>basic/index.md:56</code>）。但后面 <code>config.md</code> 的同一份 YAML 写的是相对路径 <code>./src/my-plugin.ts</code>，两处自相矛盾，照绝对路径写更稳妥。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · docs/user/develop/basic/index.md:31-44 · scratch-plugin/src/my-plugin.ts">仓库原文 · docs/user/develop/basic/index.md:31-44 · scratch-plugin/src/my-plugin.ts</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+
+export const name = 'hello-plugin'
+
+export function apply(ctx: Context) {
+  // Required dependencies are ready before apply runs.
+  console.log('[hello-plugin] plugin loaded!')
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · docs/user/develop/basic/index.md:46-54 · scratch-plugin/cordis.yml">仓库原文 · docs/user/develop/basic/index.md:46-54 · scratch-plugin/cordis.yml</span><span class="panel-lang">YAML</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-yaml">- insert:
+    - id: hello
+      name: '/absolute/path/to/deepseek-harness/scratch-plugin/src/my-plugin.ts'</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>第二步：用 <code>defineTool</code> 注册一个工具</h3>
+<p><code>inject = ['tools']</code> 让 Cordis 等工具注册表就绪。<code>defineTool</code> 根据 <code>parameters</code> 推导并校验 <code>args</code>；<code>execute</code> 返回 <code>output.schema</code> 声明的规范值，再由 <code>output.render</code> 转成给模型看的内容块。<strong>不要在 <code>execute</code> 里直接返回内容块</strong>（<code>docs/cookbook/adding-a-tool.md:41-50</code>）。</p>
+<p><code>register</code> 返回一个 disposer，并做几项检查：<code>output: { schema, render }</code> 必填，<code>render</code> 必须是函数，<code>timeoutMs</code> 必须是正的有限数，<code>run_code</code> 是保留名，同一层里不能重名（<code>packages/core/tools/src/index.ts:120-152</code>）。工具体抛出的错误只有是 <code>HarnessError</code> 子类时，结果里才保留稳定的 <code>error.name</code> 和 <code>error.code</code>。</p>
+<p>这里有一个<strong>没有验证</strong>的疑点：教程从仓库根下的 <code>scratch-plugin/</code> 按值 import <code>@deepseek-ai/dsh-tools</code>，但根 <code>package.json</code> 没声明这个依赖，pnpm 又是严格符号链接布局，Node 能否解析到存疑。第一步只用了 <code>import type</code>，编译后会被擦除，不受影响。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · docs/user/develop/basic/tool.md:7-46 · greet 工具">仓库原文 · docs/user/develop/basic/tool.md:7-46 · greet 工具</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+export const name = 'greet-tool'
+export const inject = ['tools']
+
+export function apply(ctx: Context) {
+  ctx.tools.register(defineTool({
+    name: 'greet',
+    description: 'Greet someone by name.',
+    parameters: {
+      name: { type: 'string', required: true, description: 'The name to greet' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) =&gt; [{ type: 'text', text: value }],
+    },
+    async execute(args) {
+      return `Hello, ${args.name}!`
+    },
+  }))
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>第三步：导出同名的 <code>Config</code> 类型和 schema</h3>
+<p>插件导出一个 <code>Config</code> 接口，再导出一个同名的 Schemastery schema，默认值写在 schema 上，<code>apply(ctx, config)</code> 拿到的就是“用户值或默认值”。文档明确说不要导出普通对象，因为普通对象没有实现 Standard Schema。教程写 <code>import Schema from</code>，仓库内部惯例是 <code>import z from '@deepseek-ai/schemastery'</code>，两者是同一个默认导出。</p>
+<p>第四步是打包发布，放到第 5 节以后讲。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · docs/user/develop/basic/config.md:7-45">仓库原文 · docs/user/develop/basic/config.md:7-45</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+
+export const name = 'my-plugin'
+
+export interface Config {
+  greeting: string
+  maxRetries: number
+  verbose?: boolean
+}
+
+export const Config: Schema&lt;Config&gt; = Schema.object({
+  greeting: Schema.string().default('Hello'),
+  maxRetries: Schema.number().default(3),
+  verbose: Schema.boolean().default(false),
+})
+
+export function apply(ctx: Context, config: Config) {
+  console.log(config.greeting)  // User value or schema default.
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>不构建 monorepo 也能验证：把四个包挂到一个空 Context 上</h3>
+<p>不想（或像本文一样没法）构建整个仓库时，可以从 npm 装同版本的包，把 <code>dsh-session-projection</code>、<code>dsh-system-prompt</code>、<code>dsh-tools</code>、<code>dsh-tool-executor-native</code> 依次挂到 <code>new Context()</code> 上，然后直接调用 <code>root.tools.execute({ calls, signal })</code>。不需要模型、API key 和 Web UI。本文第 1、3 节的实测都是这样跑的，脚本是 <code>scratchpad/verify/run.mjs</code>。</p>
+<p>右边是脚本的宿主部分和几次调用的结果。带 <code>Config</code> 的插件以 <code>{ greeting: 'Hi there' }</code> 挂载，<code>greet(Ada)</code> 返回 <code>Hi there, Ada!</code>；以 <code>{ greeting: 42 }</code> 挂载时 <code>await root.plugin(...)</code> 被拒绝。工具体抛普通 <code>Error('kaboom')</code> 时，<code>error</code> 里只有 <code>message</code>，没有 <code>info</code>，印证了“只有 <code>HarnessError</code> 保留 name/code”。插件释放后 <code>schemas()</code> 变成空数组，再调用得到 <code>UNKNOWN_TOOL</code>：工具注册确实随插件一起撤销。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · scratchpad/verify/run.mjs（宿主部分节选）">本文实测 · scratchpad/verify/run.mjs（宿主部分节选）</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">const root = new Context()
+await root.plugin(SessionProjection.default)
+await root.plugin(SystemPrompt.default)
+await root.plugin(Tools.default)
+await root.plugin(Native)
+const fiber = await root.plugin(myPlugin, { greeting: 'Hi there' })
+log('fiber state after await:', fiber.state)
+log('registered:', root.tools.schemas().map(s =&gt; s.name))</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · node run.mjs 输出（节选）">本文实测 · node run.mjs 输出（节选）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>[apply] tools ready? true config= {"greeting":"Hi there"}
+fiber state after await: 2
+registered: [ 'greet' ]
+
+=== call greet(boom)
+  ...
+=&gt; isError true content [{"type":"text","text":"Error: kaboom"}] error {"message":"kaboom"}
+
+=== Config validation failure
+caught: ValidationError invalid config:
+  - $.greeting expected string but got 42 (at greeting)
+
+=== dispose plugin
+registered after dispose: []
+=&gt;  {"isError":true,"error":{"message":"unknown tool \"greet\"","info":{"name":"ToolNotFoundError","code":"UNKNOWN_TOOL"}},"content":[{"type":"text","text":"Error: unknown tool \"greet\""}]}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>一次工具调用经过五个扩展点，被拒绝的调用也走到最后</h2>
+<div class="row"><div class="row-text"><p><code>packages/core/tools/README.md</code> 给的顺序是：<code>tools/pre-execute</code> → 注册的单调 guard → <code>tools/execute</code> 包裹层 → <code>tools/post-execute</code> → 定义自带的 <code>finalizeContent</code> → 只读的 <code>tools/result</code>。源码 <code>pipeline.ts</code> 的 <code>prepare()</code> 先跑 pre-execute 的 waterfall，决定是 <code>allow</code> 才去 <code>checkGuards</code>；任何拒绝都被包装成内容为 <code>Error: &lt;reason&gt;</code> 的 <code>isError</code> 结果，阶段标为 <code>post-result</code>，而 <code>post-result</code> <strong>仍会进入 post-execute</strong>（<code>pipeline.ts:32-35, 185-233</code>）。</p>
+<p>图 2 把这条路径和两种拒绝的走向画在一起。上面一行是放行的调用，下面两条虚线是实测中被拒绝的调用实际经过的阶段。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 2：工具调用流水线的五个扩展点，以及两种拒绝的实际路径（本文实测）</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 720 270" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="工具调用流水线">
+<defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#555"/></marker></defs>
+<text x="12" y="30" font-size="12" fill="#444">放行（greet(Ada)）：1 → 2 → 3 → 4 → 5</text>
+<rect x="12" y="50" width="112" height="96" rx="7" fill="#F4F6F9" stroke="#1B365D" stroke-width="1.1"/>
+<text x="68" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">1 pre-execute</text>
+<text x="68" y="92" text-anchor="middle" font-size="10.5" fill="#555">waterfall</text>
+<text x="68" y="112" text-anchor="middle" font-size="10.5" fill="#555">allow / deny</text>
+<text x="68" y="128" text-anchor="middle" font-size="10.5" fill="#555">ask / cancel</text>
+<line x1="125" y1="98" x2="143" y2="98" stroke="#555" stroke-width="1.3" marker-end="url(#a2)"/>
+<rect x="146" y="50" width="112" height="96" rx="7" fill="#F4F6F9" stroke="#1B365D" stroke-width="1.1"/>
+<text x="202" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">2 guard</text>
+<text x="202" y="92" text-anchor="middle" font-size="10.5" fill="#555">同步函数</text>
+<text x="202" y="112" text-anchor="middle" font-size="10.5" fill="#555">只能拒绝</text>
+<text x="202" y="128" text-anchor="middle" font-size="10.5" fill="#555">返回字符串即拒</text>
+<line x1="259" y1="98" x2="277" y2="98" stroke="#555" stroke-width="1.3" marker-end="url(#a2)"/>
+<rect x="280" y="50" width="160" height="96" rx="7" fill="#F4F6F9" stroke="#1B365D" stroke-width="1.1"/>
+<text x="360" y="70" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">3 tools/execute 包裹层</text>
+<rect x="292" y="80" width="136" height="24" rx="5" fill="#fff" stroke="#9aa3ae"/>
+<text x="360" y="96" text-anchor="middle" font-size="10.5" fill="#333">参数校验（ToolArgsError）</text>
+<rect x="292" y="112" width="136" height="24" rx="5" fill="#1B365D"/>
+<text x="360" y="128" text-anchor="middle" font-size="10.5" fill="#fff">工具体 execute()</text>
+<line x1="441" y1="98" x2="459" y2="98" stroke="#555" stroke-width="1.3" marker-end="url(#a2)"/>
+<rect x="462" y="50" width="112" height="96" rx="7" fill="#F4F6F9" stroke="#1B365D" stroke-width="1.1"/>
+<text x="518" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">4 post-execute</text>
+<text x="518" y="92" text-anchor="middle" font-size="10.5" fill="#555">waterfall</text>
+<text x="518" y="112" text-anchor="middle" font-size="10.5" fill="#555">换值或换内容</text>
+<text x="518" y="128" text-anchor="middle" font-size="10.5" fill="#555">block</text>
+<line x1="575" y1="98" x2="593" y2="98" stroke="#555" stroke-width="1.3" marker-end="url(#a2)"/>
+<rect x="596" y="50" width="112" height="96" rx="7" fill="#F4F6F9" stroke="#1B365D" stroke-width="1.1"/>
+<text x="652" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">5 tools/result</text>
+<text x="652" y="92" text-anchor="middle" font-size="10.5" fill="#555">emit，只读</text>
+<text x="652" y="112" text-anchor="middle" font-size="10.5" fill="#555">exec 已冻结</text>
+<text x="652" y="128" text-anchor="middle" font-size="10.5" fill="#555">不被 await</text>
+<path d="M202 147 V176 H508 V150" fill="none" stroke="#555" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#a2)"/>
+<text x="214" y="192" font-size="11.5" fill="#333">guard 拒绝（Eve）：1 → 2 → 4 → 5，跳过 3</text>
+<path d="M68 147 V214 H528 V150" fill="none" stroke="#555" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#a2)"/>
+<text x="80" y="232" font-size="11.5" fill="#333">pre-execute 拒绝（Mallory）：1 → 4 → 5，跳过 2 和 3</text>
+<text x="12" y="260" font-size="12" fill="#444">拒绝被包装成 isError 结果（阶段 post-result），所以 post-execute 和 tools/result 都会看到它。</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><h3>实测：五个阶段各挂一个监听器</h3>
+<p>被测插件在每个阶段打印一行：pre-execute 拒绝 <code>Mallory</code>，guard 拒绝 <code>Eve</code>，post-execute 把 <code>Shout</code> 的值改成大写。右边是这部分代码和三次调用的输出。</p>
+<p>输出里值得注意的几点。放行的调用严格按 1→2→3→4→5 执行，工具体收到的 <code>args</code> 是冻结对象。<code>Mallory</code> 跳过了 guard 和工具体，<code>Eve</code> 跳过了工具体，但两者都到达了 4 和 5，post-execute 看到的是 <code>isError= true</code>。另外两次调用没贴全文：<code>Shout</code> 在 post-execute 返回 <code>{ kind: 'accept', value: ... }</code> 后，新值<strong>重新经过 <code>output.render</code></strong>，最终内容是 <code>HI THERE, SHOUT!</code>；参数 <code>{}</code> 时轨迹是 1→2→3 before→3 after（<code>isError= true</code>），工具体没有执行，结果是 <code>ToolArgsError</code> / <code>INVALID_ARGS</code>，说明<strong>参数校验发生在 <code>tools/execute</code> 里面</strong>，pre-execute 和 guard 看到的是未经校验的参数。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · scratchpad/verify/run.mjs（钩子部分节选）">本文实测 · scratchpad/verify/run.mjs（钩子部分节选）</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">    ctx.on('tools/pre-execute', async (exec, next) =&gt; {
+      log('  1 [pre-execute]', exec.name, JSON.stringify(exec.arguments))
+      if (exec.arguments.name === 'Mallory') return { kind: 'deny', reason: 'Mallory is blocked by policy.' }
+      return next()
+    })
+    ctx.tools.guard((exec) =&gt; {
+      log('  2 [guard]', exec.name)
+      return exec.arguments.name === 'Eve' ? 'Eve denied by guard' : undefined
+    })
+    ctx.on('tools/execute', async (exec, next) =&gt; {
+      log('  3 [execute wrapper] before')
+      const r = await next()
+      log('  3 [execute wrapper] after isError=', r.isError)
+      return r
+    })
+    ctx.on('tools/post-execute', async (exec, result, next) =&gt; {
+      log('  4 [post-execute] isError=', result.isError, 'value=', JSON.stringify(result.value))
+      if (!result.isError &amp;&amp; exec.arguments.name === 'Shout') return { kind: 'accept', value: String(result.value).toUpperCase() }
+      return next()
+    })
+    ctx.on('tools/result', (exec, result) =&gt; {
+      log('  5 [tools/result] frozen?', Object.isFrozen(result), 'content=', JSON.stringify(result.content), 'error=', JSON.stringify(result.error))
+    })</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · node run.mjs 输出（三次调用）">本文实测 · node run.mjs 输出（三次调用）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>=== call greet(Ada)
+  1 [pre-execute] greet {"name":"Ada"}
+  2 [guard] greet
+  3 [execute wrapper] before
+  [execute body] args= {"name":"Ada"} frozen? true
+  3 [execute wrapper] after isError= false
+  4 [post-execute] isError= false value= "Hi there, Ada!"
+  5 [tools/result] frozen? true content= [{"type":"text","text":"Hi there, Ada!"}] error= undefined
+=&gt; isError false content [{"type":"text","text":"Hi there, Ada!"}] 
+
+=== call greet(Mallory)
+  1 [pre-execute] greet {"name":"Mallory"}
+  4 [post-execute] isError= true value= undefined
+  5 [tools/result] frozen? true content= [{"type":"text","text":"Error: Mallory is blocked by policy."}] error= {"message":"Mallory is blocked by policy."}
+=&gt; isError true content [{"type":"text","text":"Error: Mallory is blocked by policy."}] error {"message":"Mallory is blocked by policy."}
+
+=== call greet(Eve)
+  1 [pre-execute] greet {"name":"Eve"}
+  2 [guard] greet
+  4 [post-execute] isError= true value= undefined
+  5 [tools/result] frozen? true content= [{"type":"text","text":"Error: Eve denied by guard"}] error= {"message":"Eve denied by guard"}
+=&gt; isError true content [{"type":"text","text":"Error: Eve denied by guard"}] error {"message":"Eve denied by guard"}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>五个扩展点各管什么，怎么拒绝</h3>
+<p>下表的签名和分发方式来自 <code>packages/core/tools/src/events.ts:6-57</code>，选用规则来自 <code>docs/cookbook/adding-a-tool.md:58-60</code>。四个调用事件都按作用域过滤：挂在某个 agent 作用域上的监听器只收到这个 agent 的调用。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>扩展点</th><th>分发方式 / 签名</th><th>用来做什么</th><th>怎么拒绝</th></tr></thead>
+  <tbody>
+    <tr><td><code>tools/pre-execute</code></td><td>waterfall，<code>(exec, next) =&gt; Promise&lt;PreToolDecision&gt;</code></td><td>可扩展的 allow / deny / ask / cancel 策略</td><td>返回 <code>{ kind: 'deny', reason }</code>，或不调用 <code>next()</code></td></tr>
+    <tr><td><code>ctx.tools.guard(fn)</code></td><td>同步，<code>(exec) =&gt; string | denial | undefined</code></td><td>最后一道单调拒绝；没有 allow 结果，后面的监听器推翻不了</td><td>返回字符串</td></tr>
+    <tr><td><code>tools/execute</code></td><td>waterfall 包裹分发，<code>(exec, next) =&gt; Promise&lt;Result&gt;</code></td><td>截止时间、重试、计量；<strong>唯一可以替换 <code>exec.signal</code> 的地方</strong>，替换后必须恢复</td><td>改写 <code>next()</code> 的结果</td></tr>
+    <tr><td><code>tools/post-execute</code></td><td>waterfall，<code>(exec, result, next)</code></td><td>替换展示内容<strong>或</strong>值（不能同时换，失败结果的值不能换）、附加给模型的上下文</td><td>返回 <code>{ kind: 'block', feedback }</code></td></tr>
+    <tr><td><code>tools/result</code></td><td>emit，只读，不被 await</td><td>日志、审计、遥测；回调出错只记一条 warn</td><td>不能拒绝</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><h3>权限门禁的官方写法，以及 <code>ask</code> 的降级</h3>
+<p>dsh 里没有“工具权限”这个属性。工具插件本身不带策略，权限由单独的钩子插件在 <code>tools/pre-execute</code> 上决定。右边是 cookbook 里的门禁示例：不放行就返回 <code>deny</code>，放行就 <code>return next()</code>，让后面的监听器继续判断。</p>
+<p>返回 <code>ask</code> 时，管线会去取 <code>approval</code> 服务。<strong>没挂这个服务时，<code>ask</code> 按拒绝处理</strong>，错误码 <code>APPROVAL_UNAVAILABLE</code>，消息是 “requires approval (not yet supported)”（<code>pipeline.ts:440-492</code>）。Web profile 挂了它，裸宿主没有。</p>
+<p>由此可以总结写门禁的三条规矩：pre-execute 和 guard 读 <code>exec.arguments</code> 时要做防御，因为参数还没校验；post-execute 先看 <code>result.isError</code>，不要默认工具已经执行过；必须在下一步之前完成的事不要放进 <code>tools/result</code>，它不被 await。多个监听器挂在同一个 waterfall 上的先后顺序和 <code>thisArg</code>，见<a href="dsh_services_events_config_plugin.html">服务、事件、配置与插件实战</a>。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · docs/cookbook/extension-cookbook.md:11-33 · 权限门禁">仓库原文 · docs/cookbook/extension-cookbook.md:11-33 · 权限门禁</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
+
+declare function isAllowed(exec: ToolExecution): Promise&lt;boolean&gt;
+
+export const name = 'permission-gate'
+
+export function apply(ctx: Context) {
+  ctx.on('tools/pre-execute', async (exec, next): Promise&lt;PreToolDecision&gt; =&gt; {
+    if (!(await isAllowed(exec))) {
+      return { kind: 'deny', reason: 'Denied by policy.' }
+    }
+    return next()
+  })
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>仓库里有两个可以直接照着读的真实例子。<code>packages/guard/timeout-policy</code> 是 <code>tools/execute</code> 包裹层的标准写法，全文 81 行：读取工具的 <code>timeoutMs</code>，没有就直接 <code>next()</code>；有的话建一个 deadline，替换 <code>exec.signal</code>，在 <code>finally</code> 里换回来。<code>dsh-hooks-claude-code</code> 演示了 post-execute 的写法：先 <code>await next()</code>，再把自己的上下文合并到下游的决定上，这样后面的监听器仍然可以 block（<code>hooks-claude-code/src/index.ts:246-282</code>）。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>监听事件与打日志：<code>session/event</code>、<code>ctx.logger</code> 和不存在的 dispose 事件</h2>
+<div class="row"><div class="row-text"><p>插件作者需要的监听 API 只有 <code>ctx.on(name, handler)</code>，监听器本身就是 effect，插件卸载时自动移除。常见的误会是把 <code>turn/*</code>、<code>step/*</code>、<code>tool/call</code>、<code>tool/result</code>、<code>compaction/*</code> 当成 Cordis 事件。它们其实是<strong>持久化会话记录的类型名</strong>，要观察它们得监听 Cordis 事件 <code>session/event</code>，再按 <code>event.type</code> 分支（<code>docs/user/develop/framework/events.md:102-106</code>）。<code>session/event</code> 是 emit 模式；挂在 agent 作用域上的监听器只收到经由这个 agent 进入的会话的事件。实时 token 流来自另一个事件 <code>agent/assistant-stream</code>。</p>
+<p>官方的日志插件示例监听的是工具流水线的 <code>tools/result</code>，不是会话记录。那行 <code>import '@deepseek-ai/dsh-tools'</code> 只是为了引入 <code>Events</code> 的声明合并，拿到事件的类型。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="仓库原文 · docs/user/develop/framework/events.md:119-138 · 日志插件">仓库原文 · docs/user/develop/framework/events.md:119-138 · 日志插件</span><span class="panel-lang">TypeScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-ts">import type { Context } from '@deepseek-ai/cordis'
+import '@deepseek-ai/dsh-tools'
+
+export const name = 'tool-logger'
+
+export function apply(ctx: Context) {
+  ctx.on('tools/result', (exec, result) =&gt; {
+    console.log(`[tool] ${exec.name}(${JSON.stringify(exec.arguments)})`)
+    const text = result.content
+      .map(block =&gt; block.type === 'text' ? block.text : '')
+      .join('')
+    console.log(`[tool result] ${text.slice(0, 100)}`)
+  })
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3><code>ctx.logger</code> 只产生日志，输出要靠 exporter 插件</h3>
+<p><code>ctx.logger</code> 是 Cordis 内置的 <code>LoggerService</code>，<code>ctx.logger(name)</code> 拿具名 logger，级别有 error、info、warn、debug（<code>vendor/cordis/src/logger.ts:7-8</code>）。但它只负责产生日志，打到控制台要靠 exporter 插件，例如仓库 vendor 的 <code>logger-console</code>。第 1 节的 <code>run2.mjs</code> 在没有 exporter 的裸宿主里调用了 <code>ctx.logger.info(...)</code>，<strong>没有任何输出，也不报错</strong>。教程用 <code>console.log</code> 是图省事；正式插件建议用 <code>ctx.logger</code>，日志会带上插件名。<code>web</code> profile 配了哪个 exporter、开了哪些级别，本文没有核实。</p></div><div class="row-media"></div></div>
+<div class="row"><div class="row-text"><h3>Cordis 4 没有 <code>dispose</code> 事件，清理交给 <code>ctx.effect</code></h3>
+<p>熟悉 Koishi 或旧版 Cordis 的人会写 <code>ctx.on('dispose', ...)</code> 或 <code>ctx.on('ready', ...)</code>。dsh 用的 Cordis 4 内置事件只有 <code>internal/*</code> 一类（<code>internal/plugin</code>、<code>internal/status</code>、<code>internal/service</code> 等），<strong>没有 <code>dispose</code> 和 <code>ready</code></strong>（<code>vendor/cordis/src/events.ts:330-360</code>）。</p>
+<p><code>run.mjs</code> 的被测插件里就挂了一行 <code>ctx.on('dispose', () =&gt; log('[dispose] greet-plugin unloading'))</code>。第 2 节的输出里，<code>fiber.dispose()</code> 之后只有 <code>registered after dispose: []</code>，这行从未打印；而 <code>run2.mjs</code> 里 <code>ctx.effect</code> 的清理函数正常打印了 <code>[effect] cleanup</code>。正确做法是在 <code>apply</code> 里初始化，清理写成 <code>ctx.effect</code> 返回的函数。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · scratchpad/verify/run.mjs · 挂了但从未触发的一行">本文实测 · scratchpad/verify/run.mjs · 挂了但从未触发的一行</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">    ctx.on('dispose', () =&gt; log('[dispose] greet-plugin unloading'))</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>bundle 和 profile：<code>dsh plugin</code> 是 pnpm 外面的一层薄包装</h2>
+<div class="row"><div class="row-text"><p><strong>bundle</strong> 是在 <code>package.json</code> 里声明了 <code>"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }</code> 的普通 npm 包，它对外贡献的是<strong>一层配置 patch</strong>。patch 里用<strong>包名</strong>而不是相对路径引用插件代码，这样 Node 解析能找到安装后的代码。<strong>profile</strong> 是 <code>$DSH_HOME/profiles/&lt;name&gt;/</code> 这个目录，它的 manifest 声明 <code>dsh.profile</code>，列出由哪些 bundle 按什么顺序组成。文档的原话是：bundle 是作者分发的东西，profile 是用户启动的东西，“Nothing is both”（<code>docs/user/develop/basic/publish.md:9-16</code>）。</p>
+<p><code>dsh.bundle</code> 的全部字段是：必填的 <code>patch</code>（字符串或有序列表，列表里的多个文件合起来算<strong>同一层</strong>）、<code>platforms?</code>（Node 平台名或 <code>wsl</code>，宿主不匹配时整层跳过）、<code>listedByDefault?</code>（<code>packages/util/package-manifest/src/types.ts:31-84</code>）。判断一个包是不是 bundle，唯一标准是 <code>dsh.bundle.patch !== undefined</code>，不读 JS。bundle 也不一定自带代码：<code>subagent-codex</code> 的 patch 只插入两行，其中一行引用的是<strong>别的包</strong> <code>@deepseek-ai/dsh-tool-subagent</code> 并给它配置。</p>
+<p>右边是本文实测用的最小 bundle，三个文件。<code>peerDependencies</code> 那一行是踩坑后补上的，原因见第 8 节。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh-try/work/hello-plugin/package.json">本文实测 · dsh-try/work/hello-plugin/package.json</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{
+  "name": "dsh-hello-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "dsh": "&gt;=0.2.0 &lt;0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*"
+  }
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh-try/work/hello-plugin/cordis.patch.yml">本文实测 · dsh-try/work/hello-plugin/cordis.patch.yml</span><span class="panel-lang">YAML</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-yaml">- insert:
+    - id: hello
+      name: dsh-hello-plugin
+      config:
+        greeting: from-bundle</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh-try/work/hello-plugin/index.js">本文实测 · dsh-try/work/hello-plugin/index.js</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">import Schema from '@deepseek-ai/schemastery'
+export const name = 'hello-plugin'
+export const Config = Schema.object({ greeting: Schema.string().default('Hello') })
+export function apply(ctx, config) {
+  console.log('[hello-plugin] loaded:', config.greeting)
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3><code>dsh plugin add</code> 实际做了什么</h3>
+<p><code>dsh plugin --profile &lt;name&gt; &lt;args…&gt;</code> 把参数原样转发给 PATH 上的 pnpm，工作目录是 profile 目录，<code>add</code>、<code>remove</code>、<code>why</code>、<code>update</code> 都能用，找不到 pnpm 时退出码 127。<code>.</code>、<code>../x</code> 这类相对路径先相对<strong>调用目录</strong>解析（<code>apps/cli/reference/README.md:85</code>）。图 3 是一次 <code>add</code> 从初始化到启动的完整流程。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 3：dsh plugin add 的流程，以及启动时插件被 import 的位置</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 720 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="dsh plugin add 的流程">
+<defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#555"/></marker></defs>
+<rect x="20" y="14" width="420" height="34" rx="7" fill="#1B365D"/>
+<text x="230" y="36" text-anchor="middle" font-size="12.5" font-family="ui-monospace, Menlo, monospace" fill="#fff">dsh plugin --profile demo add ./hello-plugin</text>
+<line x1="230" y1="49" x2="230" y2="66" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="20" y="70" width="420" height="70" rx="7" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="34" y="90" font-size="12.5" font-weight="600" fill="#1a1a1a">1 profile 不存在就初始化（已存在的文件不动）</text>
+<text x="34" y="110" font-size="11" fill="#444">package.json：dependencies + dsh.profile.bundles（非内置名只有 dsh-base）</text>
+<text x="34" y="128" font-size="11" fill="#444">cordis.patch.yml：[]　pnpm-workspace.yaml：hoisted，autoInstallPeers: false</text>
+<line x1="230" y1="141" x2="230" y2="158" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="20" y="162" width="420" height="52" rx="7" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="34" y="182" font-size="12.5" font-weight="600" fill="#1a1a1a">2 安装前兼容预检</text>
+<text x="34" y="202" font-size="11" fill="#444">路径读 package.json；registry 先 pnpm view；git 和 tarball 装完再查</text>
+<line x1="441" y1="188" x2="476" y2="188" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="480" y="162" width="220" height="52" rx="7" fill="#fff" stroke="#9aa3ae" stroke-dasharray="5 4"/>
+<text x="494" y="182" font-size="11.5" fill="#1a1a1a">不兼容：nothing was installed</text>
+<text x="494" y="202" font-size="11" fill="#555">退出码 1，提示 allow-version</text>
+<line x1="230" y1="215" x2="230" y2="232" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="20" y="236" width="420" height="52" rx="7" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="34" y="256" font-size="12.5" font-weight="600" fill="#1a1a1a">3 在 profile 目录运行 PATH 上的 pnpm add</text>
+<text x="34" y="276" font-size="11" fill="#444">pnpm 版本随 PATH 而变，dsh 不自带</text>
+<line x1="441" y1="262" x2="476" y2="262" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="480" y="236" width="220" height="52" rx="7" fill="#fff" stroke="#9aa3ae" stroke-dasharray="5 4"/>
+<text x="494" y="256" font-size="11.5" fill="#1a1a1a">git 依赖的 prepare 被拦截</text>
+<text x="494" y="276" font-size="11" fill="#555">要授权完整键（第 7 节）</text>
+<line x1="230" y1="289" x2="230" y2="306" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="20" y="310" width="420" height="52" rx="7" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="34" y="330" font-size="12.5" font-weight="600" fill="#1a1a1a">4 对账：新依赖声明了 dsh.bundle.patch 吗</text>
+<text x="34" y="350" font-size="11" fill="#444">是：校验平台、预解析 patch YAML，追加到 bundles 末尾</text>
+<line x1="441" y1="336" x2="476" y2="336" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="480" y="310" width="220" height="52" rx="7" fill="#fff" stroke="#9aa3ae" stroke-dasharray="5 4"/>
+<text x="494" y="330" font-size="11.5" fill="#1a1a1a">否：warning，作为普通依赖</text>
+<text x="494" y="350" font-size="11" fill="#555">bundles 列表不变</text>
+<line x1="230" y1="363" x2="230" y2="380" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="20" y="384" width="420" height="52" rx="7" fill="#1B365D"/>
+<text x="34" y="404" font-size="12.5" font-weight="600" fill="#fff">5 dsh --profile demo 启动：叠加配置层，import 插件</text>
+<text x="34" y="424" font-size="11" fill="#dfe7f1">这一步才真正 import 入口 JS 和它依赖的包</text>
+<line x1="441" y1="410" x2="476" y2="410" stroke="#555" stroke-width="1.3" marker-end="url(#a3)"/>
+<rect x="480" y="384" width="220" height="52" rx="7" fill="#fff" stroke="#9aa3ae" stroke-dasharray="5 4"/>
+<text x="494" y="404" font-size="11.5" fill="#1a1a1a">缺 peer：ERR_MODULE_NOT_FOUND</text>
+<text x="494" y="424" font-size="11" fill="#555">该行不激活，其余照常（第 8 节）</text>
+<text x="20" y="460" font-size="12" fill="#444">第 1 到 4 步发生在安装时，第 5 步发生在每次启动时；add 和 --dump-config 成功不代表启动能成功。</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><h3>实测：安装、生成的 profile、普通依赖和版本拒绝</h3>
+<p>第一次 <code>add</code> 会初始化 profile。生成的 <code>package.json</code> 权限是 <code>0600</code>，内容和文档示例一致；<code>pnpm-workspace.yaml</code> 固定写 <code>nodeLinker: hoisted</code> 和 <code>autoInstallPeers: false</code>。源码注释解释了原因：扁平的 <code>node_modules</code> 让插件缺的 peer（cordis 等）走运行时解析，所有插件共享安装方那<strong>唯一一份 cordis 实例</strong>（<code>packages/boot/app-boot/src/profile.ts:180-189</code>）。</p>
+<p>装一个没有 <code>dsh</code> 字段的包，pnpm 成功，dsh 打一行警告，bundles 列表不变。执行 <code>remove</code> 会把依赖和层一起删掉。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh plugin --profile art add ./hello-plugin（pnpm 10.34.9）">本文实测 · dsh plugin --profile art add ./hello-plugin（pnpm 10.34.9）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>dsh: initialized profile art at &lt;scratch&gt;/dsh-try/home/profiles/art
+
+dependencies:
++ dsh-hello-plugin link:&lt;scratch&gt;/dsh-try/work/hello-plugin
+
+Already up to date
+Done in 206ms using pnpm v10.34.9</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · $DSH_HOME/profiles/art/package.json（add 之后）">本文实测 · $DSH_HOME/profiles/art/package.json（add 之后）</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{
+  "name": "dsh-profile-art",
+  "private": true,
+  "dependencies": {
+    "dsh-hello-plugin": "link:&lt;scratch&gt;/dsh-try/work/hello-plugin"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "dsh-hello-plugin"
+      ]
+    }
+  }
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · add ./plain（package.json 里没有 dsh 字段）">本文实测 · add ./plain（package.json 里没有 dsh 字段）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>Already up to date
+Done in 186ms using pnpm v10.34.9
+dsh: warning: plain-lib declares no dsh.bundle — installed as a plain dependency, not a profile layer</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p><strong>版本检查在安装时和启动时各做一次。</strong>安装一个 <code>engines.dsh: "&lt;0.2.0"</code> 的包，dsh 在调用 pnpm 之前就拒绝了，什么都没装，退出码 1，并给出豁免命令。豁免的粒度是“精确的包版本 → 精确的 dsh 版本”，记录在 profile 的 <code>compatibility.json</code> 里，升级插件或 dsh 后都不继承（<code>packages/boot/app-boot/README.md:54-58</code>）。</p>
+<p>启动时，不兼容或加载失败的 bundle 会被跳过、列入 <code>skippedBundles</code>，不会让启动失败。但 profile patch 或用户 patch 出错<strong>仍会让启动失败</strong>，而且空文件或只有注释的 patch 也算出错，要禁用一层请写 <code>[]</code>。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh-try/work/old/package.json">本文实测 · dsh-try/work/old/package.json</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{"name":"old-bundle","version":"1.0.0","engines":{"dsh":"&lt;0.2.0"},"dsh":{"bundle":{"patch":"./p.yml"}}}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh plugin --profile art add ./old（退出码 1）">本文实测 · dsh plugin --profile art add ./old（退出码 1）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>dsh: installation rejected: Plugin old-bundle@1.0.0 is incompatible with dsh 0.2.2-rc.5: requirements {"engines.dsh":"&lt;0.2.0"}. Running it may cause crashes or data loss. Update the plugin or install a plugin version compatible with this dsh runtime. To accept this risk explicitly, grant the exact-version exemption for old-bundle@1.0.0 on dsh 0.2.2-rc.5 with `dsh plugin allow-version` or the plugin manager, then retry the installation or restart dsh. Exact-version exemption: not active.
+dsh: nothing was installed.
+dsh: to accept the risk, run: dsh plugin --profile art allow-version old-bundle@1.0.0 --dsh-version 0.2.2-rc.5 --accept-risk
+dsh: plugin command failed; diagnostics: &lt;scratch&gt;/dsh-try/home/profiles/art/.plugin-manager/logs/operation-GtuOEJ/pnpm.log</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>配置是四类层，patch 只替换写出来的 <code>config</code> 键</h2>
+<div class="row"><div class="row-text"><p>官方文档写的是 <strong>4 类层</strong>，从一个空根开始依次应用：<code>dsh.profile.bundles</code> 里每个 bundle 的 patch（base 最先，之后按添加顺序），profile 自己的 <code>cordis.patch.yml</code>，<code>$DSH_HOME/cordis.patch.yml</code>（本机所有 profile 共享），最后是每个 <code>--patch</code>（按命令行顺序）（<code>docs/user/develop/basic/publish.md:120-127</code>）。源码 <code>readProfilePatches</code> 的拼接顺序完全一致，此外在设置了遥测禁用环境变量时，<strong>末尾还会追加一个由代码生成的遥测 patch</strong>（<code>packages/boot/app-boot/src/profile-context.ts:75-86</code>）。</p>
+<p>本文旧版说的“五层”，是把 <code>dsh-base</code> 和其他 bundle 拆开来数。实际层数并不固定：每个 bundle 各算一层，<code>--patch</code> 可以出现多次，还可能多出遥测层。命令行参数<strong>不是</strong> patch 层，它通过 <code>cmdlineArgs</code> 服务和行内 <code>!!js ctx.xxx ?? 默认值</code> 表达式起作用，所以用户 patch 用字面量整块替换某行的 <code>config</code> 时，这类运行时读取会一起丢掉。</p></div><div class="row-media"><figure class="panel panel-diagram light"><figcaption class="panel-head"><span class="panel-title">图 4：配置层的叠加顺序，右侧是本文实测时 hello 这一行在每层的值</span><button type="button" class="panel-btn" data-zoom>放大</button></figcaption><div class="panel-body"><svg viewBox="0 0 720 410" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, Noto Sans SC, sans-serif" role="img" aria-label="配置层叠加顺序">
+<defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#555"/></marker></defs>
+<text x="20" y="24" font-size="12" font-weight="600" fill="#444">官方分类</text>
+<text x="140" y="24" font-size="12" font-weight="600" fill="#444">按顺序应用（后面的层按 id 覆盖前面的行）</text>
+<text x="524" y="24" font-size="12" font-weight="600" fill="#444">实测：id: hello</text>
+<rect x="140" y="38" width="360" height="30" rx="6" fill="#fff" stroke="#c9ced6"/>
+<text x="154" y="58" font-size="11.5" fill="#555">空根 []</text>
+<text x="20" y="98" font-size="11.5" fill="#1a1a1a">1 bundle patch</text>
+<text x="20" y="116" font-size="10.5" fill="#555">每个 bundle 一层</text>
+<rect x="140" y="80" width="360" height="30" rx="6" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="154" y="100" font-size="11.5" fill="#1a1a1a">@deepseek-ai/dsh-base（列表第一个）</text>
+<rect x="140" y="116" width="360" height="30" rx="6" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="154" y="136" font-size="11.5" fill="#1a1a1a">其他 bundle，按 dsh.profile.bundles 顺序</text>
+<text x="524" y="136" font-size="11.5" font-family="ui-monospace, Menlo, monospace" fill="#333">greeting: from-bundle</text>
+<text x="20" y="178" font-size="11.5" fill="#1a1a1a">2 profile patch</text>
+<rect x="140" y="160" width="360" height="30" rx="6" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="154" y="180" font-size="11.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">profiles/&lt;p&gt;/cordis.patch.yml</text>
+<text x="524" y="180" font-size="11.5" font-family="ui-monospace, Menlo, monospace" fill="#333">greeting: from-profile</text>
+<text x="20" y="222" font-size="11.5" fill="#1a1a1a">3 home patch</text>
+<rect x="140" y="204" width="360" height="30" rx="6" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="154" y="224" font-size="11.5" font-family="ui-monospace, Menlo, monospace" fill="#1a1a1a">$DSH_HOME/cordis.patch.yml</text>
+<text x="524" y="224" font-size="11.5" font-family="ui-monospace, Menlo, monospace" fill="#333">greeting: from-home</text>
+<text x="20" y="266" font-size="11.5" fill="#1a1a1a">4 --patch</text>
+<text x="20" y="284" font-size="10.5" fill="#555">可出现多次</text>
+<rect x="140" y="248" width="360" height="30" rx="6" fill="#F4F6F9" stroke="#1B365D"/>
+<text x="154" y="268" font-size="11.5" fill="#1a1a1a">每个 --patch 文件，按命令行顺序</text>
+<text x="524" y="268" font-size="11.5" font-family="ui-monospace, Menlo, monospace" fill="#333">disabled: true</text>
+<rect x="140" y="292" width="360" height="30" rx="6" fill="#fff" stroke="#9aa3ae" stroke-dasharray="5 4"/>
+<text x="154" y="312" font-size="11.5" fill="#555">（条件）遥测禁用环境变量派生的 patch</text>
+<line x1="510" y1="40" x2="510" y2="318" stroke="#555" stroke-width="1.2" marker-end="url(#a4)"/>
+<rect x="140" y="340" width="560" height="54" rx="7" fill="#1B365D"/>
+<text x="154" y="361" font-size="11.5" fill="#fff">合成结果：- id: hello · name: dsh-hello-plugin · config: {greeting: from-home} · disabled: true</text>
+<text x="154" y="381" font-size="11" fill="#dfe7f1">home 层胜过 profile 层；只写 disabled 的覆盖没有清掉已有的 config</text>
+</svg></div></figure></div></div>
+<div class="row"><div class="row-text"><h3>实测：用 <code>--dump-config</code> 看每层改了什么</h3>
+<p>实验设置：bundle patch 写 <code>from-bundle</code>，profile patch 写 <code>from-profile</code>，home patch 写 <code>from-home</code>。<code>--dump-config</code> 的行头列出了改过这一行的每个文件，值是 <code>from-home</code>，<strong>home 层胜过 profile 层</strong>，和文档一致。</p>
+<p>再加一个只含 <code>- id: hello</code> 和 <code>disabled: true</code> 的 <code>--patch off.yml</code>，这一行变成 <code>config</code> 保留 <code>from-home</code>、再加 <code>disabled: true</code>。也就是说，“patch 整块替换 <code>config</code>”针对的是 patch 里<strong>写出了 <code>config</code> 键</strong>的情况，只写 <code>disabled</code> 的覆盖不会清掉已有配置。<code>--dump-default-config</code> 只显示 bundle 层。<code>--patch</code> 指向不存在的 id 时只在 stderr 报一行，dump 照常输出。把 home 层改回 <code>[]</code> 再真实启动，打印 <code>[hello-plugin] loaded: from-profile</code>，和 dump 的结果一致。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh --profile art --dump-config（三层都写了 greeting）">本文实测 · dsh --profile art --dump-config（三层都写了 greeting）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code># == dsh-hello-plugin, patched by &lt;scratch&gt;/dsh-try/home/profiles/art/cordis.patch.yml, &lt;scratch&gt;/dsh-try/home/cordis.patch.yml
+- id: hello
+  name: dsh-hello-plugin
+  config:
+    greeting: from-home</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · 再加 --patch ./off.yml（只写 disabled: true）">本文实测 · 再加 --patch ./off.yml（只写 disabled: true）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code># == dsh-hello-plugin, patched by &lt;scratch&gt;/dsh-try/home/profiles/art/cordis.patch.yml, &lt;scratch&gt;/dsh-try/home/cordis.patch.yml, &lt;scratch&gt;/dsh-try/work/off.yml
+- id: hello
+  name: dsh-hello-plugin
+  config:
+    greeting: from-home
+  disabled: true</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · --dump-default-config 与 --patch ./bad.yml（id 不存在）">本文实测 · --dump-default-config 与 --patch ./bad.yml（id 不存在）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code># --dump-default-config 只显示 bundle 层
+# == dsh-hello-plugin
+- id: hello
+  name: dsh-hello-plugin
+  config:
+    greeting: from-bundle
+
+# --patch ./bad.yml 的 stderr
+dsh: [&lt;scratch&gt;/dsh-try/work/bad.yml] patch: entry "nonexist" not found</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>由此给 bundle 作者两条建议，文档也是这么写的：默认值放在 schema 里，不要只放在 patch 里，因为用户可以覆盖你的行；覆盖更早层的某一行时要把所有键重写一遍，内置的 <code>web-app</code> 覆盖 <code>base</code> 就是这么做的（<code>packages/bundle/web-app/cordis.patch.yml:1-36</code>）。</p>
+<p>禁用插件有两种方式。一种是在 profile 或 home 的 patch 里写 <code>- id: &lt;行 id&gt;</code> 加 <code>disabled: true</code>，作用在行级，可以撤销，也不卸载包；<code>base</code> 自己就用这种方式默认关掉了 <code>tool-plugin-manager</code>。另一种是 <code>dsh plugin remove</code>，把依赖和层一起删掉。热重载方面，<code>web</code> 模板启用了 <code>dsh-hmr</code>，会监视 profile manifest、两个用户 patch 和所有 <code>--patch</code> 文件；其他模板只在启动时应用配置。patch 如何按 id 协调、HMR 如何回滚，见<a href="dsh_services_events_config_plugin.html">服务、事件、配置与插件实战</a>。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>从 git 安装：要授权构建脚本，而且必须写 pnpm 打印的完整键</h2>
+<div class="row"><div class="row-text"><p>从 git 安装拿到的是源码，没人去跑 <code>build</code>，TypeScript 包缺了 <code>lib/</code> 就会加载失败。作者需要提供一个能独立运行的 <code>prepare</code> 脚本，pnpm 会在 git 安装后执行它（<code>publish.md:161-171</code>）。但 pnpm 10 起默认拦截 git 依赖的 <code>prepare</code>，用户第一次 <code>add</code> 一定失败，必须把 <strong>pnpm 打印出来的确切键</strong>加进 profile 的 <code>pnpm-workspace.yaml</code>。</p>
+<p>文档把这件事定性为安全决定：这等于允许该包在安装时、在 agent 的任何沙箱之外执行代码，所以只应放行可信来源，并用 <code>github:you/hello-plugin#&lt;sha&gt;</code> 锁定 commit，防止作者之后的 push 悄悄改变要执行的内容（<code>publish.md:172-186</code>）。版本检查也“不是针对恶意代码的沙箱”。</p>
+<p>实验用一个本地 git 仓库 <code>dsh-git-plugin</code>：<code>prepare</code> 把 <code>src/</code> 复制到 <code>lib/</code>，<code>lib</code> 写进 <code>.gitignore</code>，安装 spec 是 <code>git+file://…/gitplug#b0b1e5f…</code>。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh-try/work/gitplug/package.json">本文实测 · dsh-try/work/gitplug/package.json</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{ "name": "dsh-git-plugin", "version": "0.1.0", "type": "module", "main": "lib/index.js",
+  "files": ["lib", "cordis.patch.yml"],
+  "scripts": { "prepare": "node build.mjs" },
+  "engines": { "dsh": "&gt;=0.2.0 &lt;0.3.0" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } } }</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · dsh-try/work/gitplug/build.mjs">本文实测 · dsh-try/work/gitplug/build.mjs</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">import {mkdirSync,copyFileSync} from 'node:fs';mkdirSync('lib',{recursive:true});copyFileSync('src/index.js','lib/index.js')</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>两个 pnpm 版本的报错不一样，dsh 的提示只写了一种</h3>
+<p>pnpm 10.34.9 的报错要求把键加进 <code>onlyBuiltDependencies</code> 列表，pnpm 11.28.5 要求加进 <code>allowBuilds</code> 映射。两者给出的键都是 <strong><code>包名@git URL#完整 sha</code></strong>。dsh 在 pnpm 报错之后追加一行提示，不管哪个 pnpm 版本都叫用户写 <code>allowBuilds</code>（<code>apps/cli/src/plugin.ts:104-106</code>）；GUI 的 Plugin Manager “批准”按钮也只解析 pnpm 11 的 <code>allowBuilds:</code> 格式（<code>packages/boot/plugin-manager/src/build-approval.ts:8-26</code>）。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · pnpm 10.34.9 首次 add 的报错（新 profile，新 store）">本文实测 · pnpm 10.34.9 首次 add 的报错（新 profile，新 store）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code> ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  Failed to prepare git-hosted package fetched from "file://&lt;scratch&gt;/dsh-try/work/gitplug": The git-hosted package "dsh-git-plugin@0.1.0" needs to execute build scripts but is not in the "onlyBuiltDependencies" allowlist.
+This error happened while installing a direct dependency of &lt;scratch&gt;/dsh-try/home/profiles/art10b
+Add the package to "onlyBuiltDependencies" in your project's pnpm-workspace.yaml to allow it to run scripts. For example:
+onlyBuiltDependencies:
+  - "dsh-git-plugin@git+file://&lt;scratch&gt;/dsh-try/work/gitplug#b0b1e5fab6b2cdaf8a85d6e468ebb549be631b38"
+...
+dsh: git-hosted plugins build on install via their prepare script, which pnpm blocks until allowed — add the exact key pnpm printed above under allowBuilds in &lt;scratch&gt;/dsh-try/home/profiles/art10b/pnpm-workspace.yaml, then re-run</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · pnpm 11.28.5 首次 add 的报错">本文实测 · pnpm 11.28.5 首次 add 的报错</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] The git-hosted package "dsh-git-plugin@0.1.0" needs to execute build scripts but is not in the "allowBuilds" allowlist.
+This error happened while installing a direct dependency of &lt;scratch&gt;/dsh-try/home/profiles/art11
+Add the package to "allowBuilds" in your project's pnpm-workspace.yaml to allow it to run scripts. For example:
+allowBuilds:
+  dsh-git-plugin@git+file://&lt;scratch&gt;/dsh-try/work/gitplug#b0b1e5fab6b2cdaf8a85d6e468ebb549be631b38: true
+...
+dsh: git-hosted plugins build on install via their prepare script, which pnpm blocks until allowed — add the exact key pnpm printed above under allowBuilds in &lt;scratch&gt;/dsh-try/home/profiles/art11/pnpm-workspace.yaml, then re-run</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><h3>实测：哪种写法能放行</h3>
+<p>逐一改 <code>pnpm-workspace.yaml</code> 后重跑 <code>add</code>，结果如下表。<strong>决定成败的是键是否完整</strong>：只写包名在两个版本上都失败；写完整键时，pnpm 10.34.9 用 <code>onlyBuiltDependencies</code> 和 <code>allowBuilds</code> 都能放行（<code>allowBuilds</code> 这一项在全新 profile 和全新 store 上复测过，<code>prepare</code> 确实执行，生成了 <code>lib/index.js</code>），pnpm 11.28.5 用 <code>allowBuilds</code> 放行，启动后打印 <code>[git-plugin] loaded</code>。所以文档示例 <code>allowBuilds:</code> 下写 <code>dsh-hello-plugin: true</code> 是错的；pnpm 10 下 dsh 的 <code>allowBuilds</code> 提示本身可用，只是和 pnpm 自己建议的键名不同，容易让人以为两者冲突。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th><code>pnpm-workspace.yaml</code> 写法</th><th>pnpm 10.34.9</th><th>pnpm 11.28.5</th></tr></thead>
+  <tbody>
+    <tr><td><code>allowBuilds:</code> 下写 <code>dsh-git-plugin: true</code>（文档示例的形式）</td><td>失败</td><td>失败</td></tr>
+    <tr><td><code>onlyBuiltDependencies:</code> 下写 <code>- dsh-git-plugin</code></td><td>失败</td><td>未测</td></tr>
+    <tr><td><code>onlyBuiltDependencies:</code> 下写完整键（pnpm 10 报错建议的形式）</td><td>成功</td><td>未测</td></tr>
+    <tr><td><code>allowBuilds:</code> 下写 <code>"完整键": true</code>（pnpm 11 报错建议的形式）</td><td>成功</td><td>成功</td></tr>
+  </tbody>
+</table></div>
+<div class="row"><div class="row-text"><p>键里带着 git URL 和 commit sha，意味着<strong>授权绑定在具体的源码版本上</strong>，换一个 commit 就要重新授权。“锁定 commit”因此不只是文档里的一条建议，pnpm 的允许列表本身就是这样实现的。</p>
+<p>复测时还看到一个现象：pnpm 10.34.9 下，一个<strong>全新的</strong> profile 在默认 store 里安装同一个 sha 时，没有任何授权也成功了，<code>node_modules/dsh-git-plugin/lib/index.js</code> 已经存在，因为另一个 profile 之前授权并构建过它，构建结果被 store 复用了；pnpm 11.28.5 在同样情况下仍然要求授权。也就是说在 pnpm 10 上，授权的实际作用范围可能是整个 store，而不只是写了允许列表的那个 profile。这一点只观察到一次，没有进一步查 pnpm 的实现。</p>
+<p>不想让用户承担这一步，可以发布到 npm（发布时带上构建好的 <code>lib/</code>），或者分发 <code>pnpm pack</code> 打出的 tarball，文档说这两种都“不需要授权”。tarball 这条路本文没有实测。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · 放行后的 profiles/art11/pnpm-workspace.yaml（pnpm 11）">本文实测 · 放行后的 profiles/art11/pnpm-workspace.yaml（pnpm 11）</span><span class="panel-lang">YAML</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-yaml">packages:
+  - .
+
+nodeLinker: hoisted
+autoInstallPeers: false
+
+allowBuilds:
+  "dsh-git-plugin@git+file://&lt;scratch&gt;/dsh-try/work/gitplug#b0b1e5fab6b2cdaf8a85d6e468ebb549be631b38": true</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>发布到 npm：用 <code>engines.dsh</code> 声明兼容，peer 只用来共享宿主实例</h2>
+<div class="row"><div class="row-text"><h3>import 了宿主包就要声明 peer，否则启动时才失败</h3>
+<p>本文第一版 <code>hello-plugin</code> 的 <code>index.js</code> 里 <code>import Schema from '@deepseek-ai/schemastery'</code>，但 <code>package.json</code> 没有声明它。<code>add</code> 和 <code>--dump-config</code> 都正常，真正启动时却报 <code>ERR_MODULE_NOT_FOUND</code>，这一行不激活，其他插件照常启动。补上 <code>"peerDependencies": { "@deepseek-ai/schemastery": "*" }</code> 后<strong>不用重装</strong>，直接重启就打印出 <code>[hello-plugin] loaded: from-profile</code>。</p>
+<p>原因在于 profile 的布局：hoisted、<code>autoInstallPeers: false</code>。<strong>声明为 peer 的包才会走运行时解析</strong>，用安装方的那一份；没声明的宿主包不会被顺手解析到。文档的规则是：需要和宿主共享实例的 dsh 包，同时写进 <code>peerDependencies</code> 和 <code>devDependencies</code>（后者用于类型检查和独立测试）；有独立版本的第三方库放 <code>dependencies</code>（<code>publish.md:105</code>）。但入门示例的 <code>package.json</code> 里一个 peer 都没写，因为它的 <code>index.js</code> 什么也不 import；一旦照 <code>config.md</code> 加上 Schemastery，就会撞上这个错误。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · 缺 peer 时 dsh --profile demo 的启动输出（堆栈节选）">本文实测 · 缺 peer 时 dsh --profile demo 的启动输出（堆栈节选）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>dsh: warning: 1 entry did not activate
+hello (dsh-hello-plugin): failed to import: Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/schemastery' imported from &lt;scratch&gt;/dsh-try/work/hello-plugin/index.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:331:9)
+    at packageResolve (node:internal/modules/esm/resolve:784:25)
+    ...</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · 补上 peerDependencies 后重启（未重装）">本文实测 · 补上 peerDependencies 后重启（未重装）</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>[hello-plugin] loaded: from-profile</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><h3>兼容性写 <code>engines.dsh</code>，不要照抄官方包的精确 rc peer</h3>
+<p>兼容性优先用 <code>engines.dsh</code> 的 SemVer 范围声明，例如 <code>"&gt;=0.2.0 &lt;0.3.0"</code>。规则是：声明了 <code>engines.dsh</code> 时只看它，<strong>完全忽略 peer</strong>；没声明时，<code>@deepseek-ai/dsh</code> 和 <code>@deepseek-ai/dsh-*</code> 的每个 peer 范围都必须满足；两者都没有就不设限。prerelease 版本参与匹配，<code>workspace:</code> 这类非法范围视为不兼容（<code>packages/boot/app-boot/README.md:54</code>）。本文的 <code>hello-plugin</code> 写的是 <code>&gt;=0.2.0 &lt;0.3.0</code>，在 dsh <code>0.2.2-rc.5</code> 上被接受，这和 npm 默认把 prerelease 排除在范围外的语义不同。</p>
+<p>官方包发布时，源码里的 <code>workspace:*</code> peer 被替换成了<strong>精确的 <code>0.2.2-rc.5</code></strong>，而且这个包没有 <code>engines.dsh</code>，所以它只能在恰好是这个 rc 的 dsh 上通过检查。第三方作者照抄这种写法，插件就会被锁死在一个 rc 版本上。正确做法是写 <code>engines.dsh</code>，peer 用宽范围（如 <code>*</code>），只用来让运行时共享宿主的实例。</p></div><div class="row-media"><figure class="panel panel-prompt"><figcaption class="panel-head"><span class="panel-title" title="本文实测 · npm view @deepseek-ai/dsh-subagent-codex@0.2.2-rc.5 peerDependencies engines --json">本文实测 · npm view @deepseek-ai/dsh-subagent-codex@0.2.2-rc.5 peerDependencies engines --json</span><span class="panel-lang">Message</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code>{
+  "@deepseek-ai/cordis": "~4.1.0",
+  "@deepseek-ai/dsh-llm": "0.2.2-rc.5",
+  "@deepseek-ai/dsh-session": "0.2.2-rc.5",
+  "@deepseek-ai/dsh-timeout": "0.2.2-rc.5",
+  "@deepseek-ai/dsh-subagent": "0.2.2-rc.5",
+  "@deepseek-ai/dsh-subprocess": "0.2.2-rc.5"
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row row-only-text"><div class="row-text"><p>发布清单还有几条。<code>files</code> 里必须列出 <code>cordis.patch.yml</code>（多文件 patch 要逐个列出）和构建好的 <code>lib/</code>，否则发布后 patch 或代码会缺失；官方包还会加上类型、<code>src</code> 和图标。要让别人发现你的插件，可以给仓库加 GitHub topic <code>dsh-plugin</code>（<code>README.md:46</code>），或者发布一份插件索引 JSON（<code>docs/user/guide/plugin-market.md:302-436</code>）。本文没有执行真正的 <code>npm publish</code>。</p></div><div class="row-media"></div></div>
+</section>
+<section class="sec"><h2>综合练习：一个带配置、工具、闸门和审计日志的 bundle</h2>
+<div class="row"><div class="row-text"><p>下面这个插件把前面各节验证过的要素拼在一起：用 <code>Config</code> 控制问候语和黑名单，注册 <code>greet</code> 工具，在 pre-execute 里按黑名单拒绝，用 guard 拦截空名字，在 <code>tools/result</code> 上打审计日志，用 <code>ctx.effect</code> 托管一个定时器。</p>
+<p><strong>这份组合代码是示意，没有作为整体运行过。</strong>其中各个机制分别在第 1 到 8 节实测过：钩子顺序和拒绝路径用的是裸宿主，bundle 外壳的结构和 <code>hello-plugin</code> 相同。把 <code>@deepseek-ai/dsh-tools</code> 声明为 peer 后能否在 profile 里解析到，是比照 schemastery 的结果推断的。日志要有 exporter 才会出现在终端。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="示意（未运行） · dsh-greet-guard/index.js">示意（未运行） · dsh-greet-guard/index.js</span><span class="panel-lang">JavaScript</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-js">import Schema from '@deepseek-ai/schemastery'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+export const name = 'greet-guard'
+export const inject = ['tools']
+export const Config = Schema.object({
+  greeting: Schema.string().default('Hello'),
+  blocked: Schema.array(Schema.string()).default([]),
+})
+
+export function apply(ctx, config) {
+  const log = ctx.logger('greet-guard')              // 需要 exporter 才有输出
+  ctx.tools.register(defineTool({
+    name: 'greet',
+    description: 'Greet someone by name.',
+    parameters: { name: { type: 'string', required: true } },
+    output: { schema: { type: 'string' }, render: (_a, v) =&gt; [{ type: 'text', text: v }] },
+    async execute(args) { return `${config.greeting}, ${args.name}!` },
+  }))
+  ctx.on('tools/pre-execute', async (exec, next) =&gt; {
+    const args = exec.arguments                       // 还没校验，可能不是对象
+    const who = args &amp;&amp; typeof args === 'object' ? args.name : undefined
+    if (exec.name === 'greet' &amp;&amp; config.blocked.includes(who))
+      return { kind: 'deny', reason: `${who} is blocked by policy.` }
+    return next()                                     // waterfall：放行必须调用 next()
+  })
+  ctx.tools.guard(exec =&gt;
+    exec.name === 'greet' &amp;&amp; exec.arguments?.name === '' ? 'empty name' : undefined)
+  ctx.on('tools/result', (exec, result) =&gt; {
+    log.info(`${exec.name} isError=${result.isError}`) // 只读，不被 await
+  })
+  ctx.effect(() =&gt; {
+    const t = setInterval(() =&gt; {}, 60_000)
+    return () =&gt; clearInterval(t)                     // 卸载时清理，不要用 ctx.on('dispose')
+  })
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="示意（未运行） · dsh-greet-guard/package.json">示意（未运行） · dsh-greet-guard/package.json</span><span class="panel-lang">JSON</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-json">{
+  "name": "dsh-greet-guard",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml"],
+  "engines": { "dsh": "&gt;=0.2.0 &lt;0.3.0" },
+  "peerDependencies": { "@deepseek-ai/schemastery": "*", "@deepseek-ai/dsh-tools": "*" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+<div class="row"><div class="row-text"><p>安装和验证的步骤如下。按第 3 节的实测推断，<code>greet(Mallory)</code> 会走 pre-execute → post-execute → result，返回 <code>Error: Mallory is blocked by policy.</code>。覆盖配置时要记得：profile patch 里写出的 <code>config</code> 会整块替换 bundle 层的 <code>config</code>，所以 <code>blocked</code> 也要重新写。要从 GitHub 分发，作者要加 <code>prepare</code> 脚本，用户要把 pnpm 打印的完整键写进允许列表。</p></div><div class="row-media"><figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="示意（未运行） · dsh-greet-guard/cordis.patch.yml">示意（未运行） · dsh-greet-guard/cordis.patch.yml</span><span class="panel-lang">YAML</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-yaml">- insert:
+    - id: greet-guard
+      name: dsh-greet-guard
+      config:
+        blocked: [Mallory]</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure>
+<figure class="panel panel-code"><figcaption class="panel-head"><span class="panel-title" title="示意（未运行） · 安装与核对">示意（未运行） · 安装与核对</span><span class="panel-lang">Shell</span><button type="button" class="panel-btn" data-copy>复制</button></figcaption><div class="panel-body"><pre><code class="language-bash">dsh plugin --profile demo add ./dsh-greet-guard
+dsh --profile demo --dump-config | grep -A6 '# == dsh-greet-guard'
+# 覆盖配置：写进 $DSH_HOME/profiles/demo/cordis.patch.yml
+#   - id: greet-guard
+#     config: { greeting: Hi, blocked: [Mallory, Eve] }
+dsh --profile demo</code></pre></div><button type="button" class="panel-expand" data-expand hidden>展开全部</button></figure></div></div>
+</section>
+<section class="sec"><h2>文档与实际行为的出入，以及没有验证的部分</h2>
+<div class="row row-only-text"><div class="row-text"><p>下表汇总前文发现的出入。“实测”指本文运行过，“源码”指对照 commit <code>4b399c3</code> 的源码。</p></div><div class="row-media"></div></div>
+<div class="row-wide"><table>
+  <thead><tr><th>出入点</th><th>文档或常见说法</th><th>实际情况</th></tr></thead>
+  <tbody>
+    <tr><td>依赖消失后的状态</td><td><code>framework/index.md:38</code>：ACTIVE → DISPOSED，服务回来后再加载</td><td>回到 PENDING(0)，再变回 ACTIVE；源码里 DISPOSED 表示“不能再启动”（实测、源码）</td></tr>
+    <tr><td>被拒绝的工具调用</td><td>容易理解成“拒绝即结束”</td><td>拒绝结果阶段为 post-result，仍会进入 post-execute 和 <code>tools/result</code>（实测、源码）</td></tr>
+    <tr><td>会话事件名</td><td><code>turn/*</code>、<code>tool/result</code> 等看起来像 Cordis 事件</td><td>它们是会话记录类型，要监听 <code>session/event</code> 再按 <code>event.type</code> 分支（文档本身写明）</td></tr>
+    <tr><td><code>ctx.logger</code></td><td>教程用 <code>console.log</code>，没提 logger 输出</td><td>没有 exporter 插件时 <code>ctx.logger.info</code> 不输出也不报错（实测）</td></tr>
+    <tr><td><code>dispose</code> 事件</td><td>来自 Koishi / 旧版 Cordis 的习惯</td><td>Cordis 4 没有 <code>dispose</code>、<code>ready</code> 事件，<code>ctx.on('dispose')</code> 从不触发（实测、源码）</td></tr>
+    <tr><td>插件路径</td><td><code>basic/index.md</code> 要求绝对路径</td><td><code>config.md</code> 的同一份 YAML 用了 <code>./src/my-plugin.ts</code>（文档自相矛盾）</td></tr>
+    <tr><td>配置层数</td><td>本文旧版说“五层”</td><td>官方是 4 类层，层数随 bundle 和 <code>--patch</code> 数量变化，末尾还可能追加遥测 patch（文档、源码）</td></tr>
+    <tr><td>“整块替换 config”</td><td>容易理解成整行替换</td><td>只替换 patch 里写出的 <code>config</code> 键，只写 <code>disabled</code> 不会清掉 config（实测）</td></tr>
+    <tr><td>git 构建授权</td><td><code>publish.md:174-177</code> 示例 <code>allowBuilds: { dsh-hello-plugin: true }</code></td><td>只写包名在 pnpm 10 和 11 上都无效，必须写 pnpm 打印的完整键（含 git URL 和 sha）（实测）</td></tr>
+    <tr><td>pnpm 10 的键名</td><td>文档与 dsh 提示：pnpm 10 起用 <code>allowBuilds</code></td><td>pnpm 10.34.9 的报错建议 <code>onlyBuiltDependencies</code>；实测两者写完整键都能放行，GUI 批准按钮只认 pnpm 11 格式（实测、源码）</td></tr>
+    <tr><td>入门 bundle 示例</td><td>示例 <code>package.json</code> 没有 peer</td><td>import 了宿主包就要声明 peer，否则 add 成功、启动时 <code>ERR_MODULE_NOT_FOUND</code>（实测）</td></tr>
+    <tr><td>版本声明</td><td>官方包发布后 dsh-* peer 是精确 rc 版本、无 <code>engines.dsh</code></td><td>照抄会锁死在一个 rc 上；应写 <code>engines.dsh</code>，有它时 peer 不参与判定（实测、文档）</td></tr>
+    <tr><td>Node 版本</td><td>源码根要求 <code>^24.22.3 || &gt;=26.13.1</code></td><td>已发布的 0.2.2-rc.5 要求 <code>&gt;=24.9.0</code>，在 24.22.2 上能装能跑（实测）</td></tr>
+  </tbody>
+</table></div>
+<div class="row row-only-text"><div class="row-text"><p>以下内容<strong>没有验证</strong>：</p>
+<ul>
+  <li>官方 <code>pnpm dsh web --patch</code> 源码教程路径没有端到端跑通（完整构建报 <code>ERR_PNPM_ENOSPC</code>）；第 2 节的教程行为是在裸宿主上验证的。</li>
+  <li>tool 教程从 <code>scratch-plugin/</code> 按值 import <code>@deepseek-ai/dsh-tools</code>，在 pnpm 严格链接下能否解析。</li>
+  <li>综合练习插件没有作为整体运行；把 <code>dsh-tools</code> 声明为 peer 后在 profile 里能否解析是推断。</li>
+  <li>真实的 <code>github:owner/repo#sha</code> 简写下 pnpm 打印的键长什么样；实验用的是 <code>git+file://</code>。</li>
+  <li>pnpm 10 下“授权随 store 复用”只观察到一次，没有查实现；pnpm 10 系列从哪个小版本起认 <code>allowBuilds</code> 也没有确认。</li>
+  <li><code>dsh plugin update</code>、<code>pnpm pack</code> 打出的 tarball 安装、真正的 <code>npm publish</code> 都没有执行。</li>
+  <li>多个 bundle 覆盖同一行时的先后顺序没有测试（按文档应是 bundles 列表中靠后者胜）。</li>
+  <li><code>web</code> profile 配了哪个 logger exporter、哪些级别；zod 等其他 Standard Schema 库能否用作 <code>Config</code>。</li>
+  <li>全局安装 dsh 时 npm 提示 5 个包（<code>node-pty</code>、<code>koffi</code> 等）的安装脚本未授权，本文没有授权它们；<code>dsh plugin</code> 和 base profile 启动不受影响，对 PTY 类功能的影响未验证。</li>
+</ul>
+<blockquote><p>总结成给新手的最短路径：先在裸宿主上验证工具和钩子；<code>package.json</code> 写 <code>engines.dsh</code> 和宽范围 peer，把 import 的每个宿主包都声明成 peer；用本地目录 <code>add</code> 安装，用 <code>--dump-config</code> 核对分层，再真实启动一次确认插件激活；最后发布到 npm，避开 git 构建授权这一步。</p></blockquote></div><div class="row-media"></div></div>
+</section>
+  </main>
+  <footer class="foot">来源：github.com/deepseek-ai/deepseek-harness（commit 4b399c3）的 README、docs/user/develop（basic 的 index / tool / config / publish，framework 的 index / events）、docs/cookbook（extension-cookbook、adding-a-tool）、packages/core/tools（README、src/contracts.ts、src/pipeline.ts、src/events.ts）、packages/boot（app-boot、plugin-manager）、apps/cli（reference/README、src/plugin.ts）、vendor/cordis/src。标“仓库原文”的代码按原文摘录；标“本文实测”的输出原样贴出，临时目录路径缩写为 &amp;lt;scratch&amp;gt;：工具和钩子部分在一个用 npm 包（0.2.3-alpha.2，带 cordis 4.2.0-alpha.1）拼成的裸宿主上运行，打包和安装部分用全局安装的 @deepseek-ai/dsh 0.2.2-rc.5，在 Node 24.22.2、pnpm 10.34.9 和 11.28.5 下运行。没有运行的：官方的 pnpm dsh web --patch 源码教程路径（完整源码构建因磁盘不足报 ERR_PNPM_ENOSPC）、综合练习插件作为整体、npm publish 和 tarball 安装。标“示意（未运行）”的代码是本文写的。dsh 仍是开发者预览版，接口可能变化。</footer>
+</div>
+<dialog class="panel panel-diagram zoom-dialog" aria-labelledby="zoom-title">
+  <div class="panel-head"><span class="panel-title" id="zoom-title"></span><button type="button" class="panel-btn" data-zoom-close>关闭</button></div>
+  <div class="panel-body"></div>
+</dialog>
+<div class="sr-only" role="status" data-status></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+(function () {
+  var root = document.documentElement;
+  // theme
+  var tg = document.querySelector('[data-theme-toggle]');
+  if (tg) tg.addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('tech-article-theme', next); } catch (e) {}
+  });
+
+  // heading ids + anchors
+  var used = {};
+  function slug(t) {
+    var s = t.trim().toLowerCase().replace(/[\s　]+/g, '-').replace(/[^\p{L}\p{N}\-_]/gu, '').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'section';
+    var b = s, i = 2; while (used[s]) s = b + '-' + i++; used[s] = 1; return s;
+  }
+  var heads = Array.prototype.slice.call(document.querySelectorAll('.content h2, .content h3'));
+  var labels = heads.map(function (h) { return h.textContent.trim(); });
+  heads.forEach(function (h, i) {
+    h.id = h.id || slug(labels[i]);
+    var a = document.createElement('a'); a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#'; a.setAttribute('aria-label', '链接到本节');
+    h.appendChild(a);
+  });
+
+  // reading time + section count
+  var content = document.querySelector('.content');
+  var text = content.innerText || '';
+  var cjk = (text.match(/[㐀-鿿]/g) || []).length;
+  var words = (text.replace(/[㐀-鿿]/g, ' ').match(/[A-Za-z0-9_]+/g) || []).length;
+  var rt = document.querySelector('[data-reading-time]');
+  var preset = null;
+  try { preset = JSON.parse(document.getElementById('article-meta').textContent).minutes; } catch (e) {}
+  if (rt) rt.textContent = '约 ' + (preset || Math.max(1, Math.round(cjk / 400 + words / 220))) + ' 分钟';
+  var sc = document.querySelector('[data-sections]');
+  var nsec = document.querySelectorAll('.content .sec > h2').length;
+  if (sc) sc.textContent = nsec + ' 个章节';
+  if (content) content.style.setProperty('--sec-of', '" / ' + (nsec < 10 ? '0' : '') + nsec + '"');
+
+  // tables scroll inside a frame
+  content.querySelectorAll('table').forEach(function (t) {
+    var w = document.createElement('div'); w.className = 'table-wrap';
+    t.parentNode.insertBefore(w, t); w.appendChild(t);
+  });
+
+  // panels: copy, expand, zoom
+  var status = document.querySelector('[data-status]'), dlg = document.querySelector('.zoom-dialog');
+  document.querySelectorAll('.panel').forEach(function (p) {
+    var body = p.querySelector('.panel-body'), more = p.querySelector('[data-expand]');
+    // a code panel that scrolls needs a keyboard stop, or its hidden lines are pointer-only
+    if (p.querySelector('pre') && (body.scrollWidth > body.clientWidth || body.scrollHeight > body.clientHeight)) {
+      body.tabIndex = 0; body.setAttribute('role', 'region');
+      body.setAttribute('aria-label', p.querySelector('.panel-title').textContent);
+    }
+    if (more && body.scrollHeight > body.clientHeight + 8) {
+      p.classList.add('is-collapsible');
+      more.hidden = false;
+      more.addEventListener('click', function () {
+        var on = p.classList.toggle('expanded');
+        more.textContent = on ? '收起' : '展开全部';
+        if (!on) p.scrollIntoView({ block: 'nearest' });
+      });
+    }
+    var copy = p.querySelector('[data-copy]');
+    if (copy) copy.addEventListener('click', function () {
+      var txt = p.querySelector('pre').innerText;
+      var report = function (ok) {
+        var msg = ok ? '已复制' : '复制失败，请手动选中复制';
+        copy.textContent = msg; status.textContent = msg;
+        setTimeout(function () { copy.textContent = '复制'; }, ok ? 1400 : 4000);
+      };
+      var legacy = function () {
+        var ta = document.createElement('textarea'), ok = false;
+        ta.value = txt; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        ta.remove(); copy.focus(); return ok;
+      };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(function () { report(true); }, function () { report(legacy()); });
+      else report(legacy());
+    });
+    var zoom = p.querySelector('[data-zoom]');
+    if (zoom) {
+      // cap figures near their drawn size (at least 760px): scaled-up labels outgrow the body text
+      var art = body.querySelector('svg, img');
+      var nat = art && (art.tagName === 'IMG' ? art.naturalWidth || +art.getAttribute('width')
+        : +art.getAttribute('width') || (art.viewBox && art.viewBox.baseVal && art.viewBox.baseVal.width));
+      if (nat > 0) art.style.maxWidth = Math.max(nat, 760) + 'px';
+      var open = function () {
+        dlg.className = 'panel panel-diagram zoom-dialog ' + (p.classList.contains('dark') ? 'dark' : 'light');
+        dlg.querySelector('.panel-title').textContent = p.querySelector('.panel-title').textContent;
+        dlg.querySelector('.panel-body').innerHTML = body.innerHTML;
+        dlg.showModal();
+      };
+      zoom.addEventListener('click', open);
+      body.addEventListener('click', open);
+    }
+  });
+  dlg.querySelector('[data-zoom-close]').addEventListener('click', function () { dlg.close(); });
+  dlg.querySelector('.panel-body').addEventListener('click', function () { dlg.close(); });
+
+  // syntax colours for plain code blocks
+  if (window.hljs) document.querySelectorAll('.panel-code code[class^="language-"]').forEach(function (el) {
+    try { window.hljs.highlightElement(el); } catch (e) {}
+  });
+
+  // sidebar table of contents, collapsible
+  var root = document.documentElement, list = document.querySelector('.toc-list'), tog = document.querySelector('.toc-toggle');
+  var narrow = matchMedia('(max-width: 1100px)');
+  var secNo = 0, subNo = 0, nums = heads.map(function (h) {
+    if (h.tagName === 'H2') { subNo = 0; return ('0' + (++secNo)).slice(-2); }
+    return ('0' + secNo).slice(-2) + '.' + (++subNo);
+  });
+  var tt = document.querySelector('[data-toc-title]'), h1 = document.querySelector('h1');
+  if (tt && h1) tt.textContent = h1.textContent.trim();
+  var secOf = [], lis = [], cur = -1;
+  var links = heads.map(function (h, i) {
+    var li = document.createElement('li'), a = document.createElement('a'), n = document.createElement('span'), t = document.createElement('span');
+    a.href = '#' + h.id; a.className = h.tagName === 'H3' ? 'lv3' : 'lv2';
+    if (h.tagName === 'H2') cur = i; else li.className = 'sub';
+    secOf.push(cur); lis.push(li);
+    n.className = 'num'; n.textContent = nums[i]; t.textContent = labels[i];
+    a.appendChild(n); a.appendChild(t); li.appendChild(a); list.appendChild(li);
+    a.addEventListener('click', function () { if (narrow.matches) setToc(false, false); });
+    return a;
+  });
+  function setToc(open, remember) {
+    root.setAttribute('data-toc', open ? 'open' : 'closed');
+    tog.setAttribute('aria-expanded', open ? 'true' : 'false');
+    tog.textContent = open ? '收起目录' : '☰ 目录';
+    if (remember) try { localStorage.setItem('tech-article-toc', open ? 'open' : 'closed'); } catch (e) {}
+  }
+  setToc(root.getAttribute('data-toc') !== 'closed', false);
+  tog.addEventListener('click', function () { setToc(root.getAttribute('data-toc') === 'closed', !narrow.matches); });
+  addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && narrow.matches && root.getAttribute('data-toc') === 'open') { setToc(false, false); tog.focus(); }
+  });
+  var bar = document.querySelector('.progress');
+  function onScroll() {
+    var y = innerHeight * 0.25, act = 0;
+    heads.forEach(function (h, i) { if (h.getBoundingClientRect().top < y) act = i; });
+    var sec = secOf[act];
+    links.forEach(function (a, i) {
+      var on = i === act;
+      lis[i].classList.toggle('in-sec', secOf[i] === sec && sec >= 0);
+      a.classList.toggle('is-sec', i === sec);
+      if (on && !a.classList.contains('is-active') && root.getAttribute('data-toc') === 'open') {
+        var box = list.parentElement, r = a.getBoundingClientRect(), br = box.getBoundingClientRect();
+        if (r.top < br.top + 48 || r.bottom > br.bottom - 24) box.scrollTop += r.top - br.top - box.clientHeight / 3;
+      }
+      a.classList.toggle('is-active', on);
+      if (on) a.setAttribute('aria-current', 'location'); else a.removeAttribute('aria-current');
+    });
+    var max = document.documentElement.scrollHeight - innerHeight;
+    bar.style.transform = 'scaleX(' + (max > 0 ? scrollY / max : 0) + ')';
+  }
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+})();
+</script>
+</body>
+</html>

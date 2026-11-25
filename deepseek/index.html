@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek 学习笔记</title>
+<meta name="description" content="5 篇技术文章的目录">
+<script>(function(){try{var t=localStorage.getItem('tech-article-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+<style>
+:root {
+  --bg: #f5f4ed; --surface: #faf9f5; --sunken: #f0eee6;
+  --ink: #141413; --ink-2: #2c2c29; --muted: #504e49; --faint: #6b6a64;
+  --line: #e8e6dc; --line-strong: #d8d5c8;
+  --accent: #1B365D; --accent-soft: #EEF2F7;
+  --shadow: 0 1px 2px rgb(20 20 19 / 0.04), 0 8px 24px rgb(20 20 19 / 0.05);
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Noto Sans CJK SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+    --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e;
+    --line: #2e2d2a; --line-strong: #403f3c;
+    --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141413; --surface: #1e1d1b; --sunken: #282724;
+  --ink: #f2f0ea; --ink-2: #e2ded3; --muted: #a8a49a; --faint: #7a776e;
+  --line: #2e2d2a; --line-strong: #403f3c;
+  --accent: #9bb8dc; --accent-soft: rgb(155 184 220 / 0.12);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 8px 24px rgb(0 0 0 / 0.26);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 96px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration: none; }
+code { font-family: var(--mono); font-size: 0.9em; }
+.page { max-width: 1120px; margin: 0 auto; padding: 0 56px 96px; }
+.masthead { padding: 64px 0 40px; }
+.masthead-top { display: flex; justify-content: space-between; align-items: center; }
+.kicker { margin: 0; font: 600 0.75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--muted); font: 0.8125rem var(--sans); cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); border-color: var(--line-strong); }
+h1 { margin: 20px 0 10px; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; }
+.summary { margin: 0; color: var(--muted); font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
+
+.toolbar {
+  position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  margin: 0 0 8px; padding: 14px 0; background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--ink);
+}
+.search {
+  flex: 1 1 240px; max-width: 320px; height: 36px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  color: var(--ink); font: 0.875rem var(--sans); outline: none;
+}
+.search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag {
+  height: 30px; padding: 0 12px; border: 1px solid transparent; border-radius: 999px;
+  background: none; color: var(--muted); font: 0.84375rem var(--sans); cursor: pointer;
+}
+@media (hover: hover) { .tag:hover { color: var(--ink); } }
+.tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag[aria-pressed="true"] { background: var(--ink); color: var(--bg); font-weight: 600; }
+.sort { margin-left: auto; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-2); font: 0.8125rem var(--sans); }
+
+.grid { display: block; }
+.card {
+  display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 0 32px;
+  padding: 32px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere;
+}
+.card-side { padding-top: 6px; color: var(--muted); font: 0.78125rem/1.6 var(--mono); font-variant-numeric: tabular-nums; }
+.card-kicker { display: block; margin-top: 4px; font: 600 0.75rem/1.5 var(--sans); letter-spacing: .04em; color: var(--accent); }
+.card-main { max-width: 760px; }
+.card h2 { margin: 0 0 10px; font-size: 1.375rem; line-height: 1.4; font-weight: 700; letter-spacing: -0.005em; text-wrap: balance; }
+.card h2 a { transition: color .15s ease; }
+@media (hover: hover) { .card h2 a:hover { color: var(--accent); } }
+.card h2 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.card h2 code { color: var(--accent); font-weight: 600; }
+.card .deck { margin: 0 0 12px; color: var(--ink-2); font-size: 0.9375rem; line-height: 1.75; }
+.card .info { margin: 0; color: var(--muted); font-size: 0.8125rem; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.card .info span + span::before { content: "·"; margin: 0 8px; color: var(--faint); }
+.card details { margin-top: 10px; }
+.card summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--accent); font-size: 0.8125rem; list-style: none; }
+.card summary::-webkit-details-marker { display: none; }
+.card summary::before { content: "+"; width: 1em; font-family: var(--mono); text-align: center; }
+.card details[open] summary::before { content: "−"; }
+.card summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.card ol { columns: 2 280px; column-gap: 32px; margin: 12px 0 0; padding: 12px 0 0 1.8em; border-top: 1px solid var(--line); font-size: 0.84375rem; line-height: 1.6; color: var(--ink-2); }
+.card ol li { margin: 0 0 6px; break-inside: avoid; }
+.card ol li::marker { color: var(--faint); font-family: var(--mono); font-size: 0.71875rem; }
+@media (hover: hover) { .card ol a:hover { color: var(--accent); } }
+.empty { padding: 60px 0; text-align: center; color: var(--muted); }
+.empty p { margin: 0 0 14px; }
+.empty button { height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 0.875rem var(--sans); cursor: pointer; }
+.back { display: inline-block; margin-bottom: 14px; color: var(--muted); font-size: 0.84375rem; }
+.back:hover { color: var(--accent); }
+.topics { margin: 0 0 48px; }
+.topics h2 { margin: 0 0 12px; font: 600 0.6875rem/1 var(--mono); letter-spacing: .14em; color: var(--faint); }
+.topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+.topic {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 16px;
+  padding: 18px 22px; border-radius: 12px; background: var(--ink); color: var(--bg);
+  transition: transform .15s ease;
+}
+@media (hover: hover) { .topic:hover { transform: translateY(-1px); } }
+.topic:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.topic strong { font-size: 1.0625rem; }
+.topic span { grid-column: 1; color: color-mix(in srgb, var(--bg) 72%, var(--ink)); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.topic::after { content: "→"; grid-column: 2; grid-row: 1 / 3; font-size: 1.125rem; }
+.foot { margin-top: 56px; color: var(--muted); font-size: 0.78125rem; }
+.foot code { padding: 1px 5px; border-radius: 4px; background: var(--sunken); color: var(--muted); }
+mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
+
+@media (max-width: 760px) {
+  html { scroll-padding-top: 0; }
+  .page { padding: 0 16px 64px; }
+  .toolbar { position: static; margin: 0 -16px 20px; padding: 12px 16px; }
+  .search, .sort { font-size: 1rem; }
+  .card { grid-template-columns: 1fr; padding: 24px 0; }
+  .card-side { display: flex; gap: 10px; align-items: baseline; padding: 0 0 6px; }
+  .card-kicker { margin: 0; }
+  .card h2 { font-size: 1.1875rem; }
+  .sort { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="masthead">
+    <a class="back" href="../index.html">← 上级目录</a>
+    <div class="masthead-top">
+      <p class="kicker">文章目录</p>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换明暗主题">◐ 主题</button>
+    </div>
+    <h1>DeepSeek 学习笔记</h1>
+    <p class="summary" data-summary></p>
+  </header>
+  <div class="toolbar">
+    <input class="search" type="search" placeholder="搜索标题、摘要或章节…" aria-label="搜索文章" data-search>
+    <div class="tags" data-tags></div>
+    <select class="sort" data-sort aria-label="排序">
+      <option value="created">最近创建</option>
+      <option value="updated">最近更新</option>
+      <option value="title">按标题</option>
+      <option value="length">按篇幅</option>
+    </select>
+  </div>
+  <main class="grid" data-grid></main>
+  <div class="empty" data-empty hidden><p data-empty-msg></p><button type="button" data-clear>清除搜索和筛选</button></div>
+  <footer class="foot">由 <code>build_index.py</code> 生成于 2026-11-23。新增或删除文章后重新运行即可更新。</footer>
+</div>
+<script id="articles" type="application/json">[{"title": "九天从 bigram 到 DeepSeek API：先写一个小 GPT，再把模型接进 agent", "title_html": "九天从 bigram 到 DeepSeek API：先写一个小 GPT，再把模型接进 agent", "kicker": "学习路线", "deck": "按九天的学习计划，从只看前一个字的 bigram 写到多头注意力的小 GPT，讲清 KV cache 和采样，看 DeepSeek 用 MoE 和 MLA 换掉了哪两个部件，再把 DeepSeek API 的结构化输出、流式、工具调用、重试、成本、thinking、前缀缓存和 TTFT 逐项接进 agent。", "meta": ["DeepSeek API 文档截至 2026-11-23", "D1–D9 学习计划", "Python · PyTorch · OpenAI SDK"], "sections": ["路线总览：三段九天，后面几天都用到前面的东西", "D1 bigram：只看前一个字，猜下一个字", "D2 self-attention：每个位置按相关程度汇总前面的信息", "D3 小 GPT：多头、FFN、残差，叠成 N 层", "D4 推理：KV cache 省掉重复计算，采样决定挑哪个字", "D5 DeepSeek 改了哪里：FFN 换成 MoE，注意力换成 MLA", "D6 API 的输出：JSON 模式和流式", "D7 工具调用：一个循环，直到模型不再要工具", "D8 重试、限流和成本：哪些错误能重试，钱花在哪", "D9 thinking、前缀缓存和 TTFT：三个指标一起测"], "chars": 8649, "minutes": 23, "updated": "2026-11-23", "created": "2026-11-23 17:47", "links": [{"text": "路线总览：三段九天，后面几天都用到前面的东西", "id": "路线总览三段九天后面几天都用到前面的东西"}, {"text": "D1 bigram：只看前一个字，猜下一个字", "id": "d1-bigram只看前一个字猜下一个字"}, {"text": "D2 self-attention：每个位置按相关程度汇总前面的信息", "id": "d2-self-attention每个位置按相关程度汇总前面的信息"}, {"text": "D3 小 GPT：多头、FFN、残差，叠成 N 层", "id": "d3-小-gpt多头ffn残差叠成-n-层"}, {"text": "D4 推理：KV cache 省掉重复计算，采样决定挑哪个字", "id": "d4-推理kv-cache-省掉重复计算采样决定挑哪个字"}, {"text": "D5 DeepSeek 改了哪里：FFN 换成 MoE，注意力换成 MLA", "id": "d5-deepseek-改了哪里ffn-换成-moe注意力换成-mla"}, {"text": "D6 API 的输出：JSON 模式和流式", "id": "d6-api-的输出json-模式和流式"}, {"text": "D7 工具调用：一个循环，直到模型不再要工具", "id": "d7-工具调用一个循环直到模型不再要工具"}, {"text": "D8 重试、限流和成本：哪些错误能重试，钱花在哪", "id": "d8-重试限流和成本哪些错误能重试钱花在哪"}, {"text": "D9 thinking、前缀缓存和 TTFT：三个指标一起测", "id": "d9-thinking前缀缓存和-ttft三个指标一起测"}], "file": "deepseek_9day_gpt_to_api.html"}, {"title": "DeepSeek 学习地图：模型时间线、两条主线加系统底座、阅读顺序", "title_html": "DeepSeek 学习地图：模型时间线、两条主线加系统底座、阅读顺序", "kicker": "学习地图", "deck": "从 2023 年的 DeepSeek LLM 到 2026 年的 V4.1-Flash：每代模型解决了什么问题，架构线和训练线怎样一路继承下来，底下那层硬件协同设计为什么要单列，今天的 API 该怎么调，以及按什么顺序读 12 篇论文。", "meta": ["官方文档截至 2026-11-23", "时间线 + 论文 + API + 阅读顺序", "冲突与未核实处单独标出"], "sections": ["框架：两条主线，下面垫一层系统底座", "时间线：四个时代，规模从 7B 涨到 1.6T，上下文从 4K 涨到 1M", "架构线：每一步都继承了上一步的一个部件", "训练线：先把 RL 做便宜，再让推理变得可控", "系统底座：为什么要单列一层", "今天的 API：两个模型 ID，thinking 由参数控制", "阅读顺序：8 个阶段 12 篇，或 5 篇快速通道", "在本文件夹里继续：按阅读阶段写的计划文章"], "chars": 13492, "minutes": 22, "updated": "2026-11-23", "created": "2026-11-23 17:35", "links": [{"text": "框架：两条主线，下面垫一层系统底座", "id": "框架两条主线下面垫一层系统底座"}, {"text": "时间线：四个时代，规模从 7B 涨到 1.6T，上下文从 4K 涨到 1M", "id": "时间线四个时代规模从-7b-涨到-16t上下文从-4k-涨到-1m"}, {"text": "架构线：每一步都继承了上一步的一个部件", "id": "架构线每一步都继承了上一步的一个部件"}, {"text": "训练线：先把 RL 做便宜，再让推理变得可控", "id": "训练线先把-rl-做便宜再让推理变得可控"}, {"text": "系统底座：为什么要单列一层", "id": "系统底座为什么要单列一层"}, {"text": "今天的 API：两个模型 ID，thinking 由参数控制", "id": "今天的-api两个模型-idthinking-由参数控制"}, {"text": "阅读顺序：8 个阶段 12 篇，或 5 篇快速通道", "id": "阅读顺序8-个阶段-12-篇或-5-篇快速通道"}, {"text": "在本文件夹里继续：按阅读阶段写的计划文章", "id": "在本文件夹里继续按阅读阶段写的计划文章"}], "file": "deepseek_learning_map.html"}, {"title": "dsh 插件的生命周期与副作用：Fiber、ctx.effect 和卸载顺序", "title_html": "dsh 插件的生命周期与副作用：Fiber、<code>ctx.effect<\/code> 和卸载顺序", "kicker": "机制拆解", "deck": "dsh 插件的生死由一个 epoch 字符串驱动：依赖到齐时加载，其余任何变化都先卸载。ctx.effect 同步执行并先登记 disposer；卸载时同一 effect 内逆序串行，同一 Fiber 的顶层 effect 逆序启动、并发执行，提供方等所有依赖它的 Fiber 卸完再释放。本文用实际运行的实验把这些规则逐条验证，复现“提供方先释放资源”的四种形状和修法，并标出文档与源码对不上的地方。", "meta": ["deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）", "@deepseek-ai/cordis 4.2.0-alpha.1", "Node v24.22.2", "12 个实验脚本实际运行"], "sections": ["epoch：一个字符串决定 Fiber 往哪走", "ctx.effect：立即执行，先登记 disposer，再执行插件代码", "卸载顺序：effect 内串行，顶层并发，提供方等消费方", "“提供方先释放资源”只在绕开 inject 依赖边时出现", "可选依赖：用 ctx.inject 子 Fiber 承载，ctx.get 只做探测", "官方审计的三条 P0，和真实插件的四种写法", "文档与源码对不上的地方，以及没有解决的问题", "结论：对每个资源问一个问题"], "chars": 20908, "minutes": 56, "updated": "2026-11-23", "created": "2026-11-23 19:52", "links": [{"text": "epoch：一个字符串决定 Fiber 往哪走", "id": "epoch一个字符串决定-fiber-往哪走"}, {"text": "ctx.effect：立即执行，先登记 disposer，再执行插件代码", "id": "ctxeffect立即执行先登记-disposer再执行插件代码"}, {"text": "卸载顺序：effect 内串行，顶层并发，提供方等消费方", "id": "卸载顺序effect-内串行顶层并发提供方等消费方"}, {"text": "“提供方先释放资源”只在绕开 inject 依赖边时出现", "id": "提供方先释放资源只在绕开-inject-依赖边时出现"}, {"text": "可选依赖：用 ctx.inject 子 Fiber 承载，ctx.get 只做探测", "id": "可选依赖用-ctxinject-子-fiber-承载ctxget-只做探测"}, {"text": "官方审计的三条 P0，和真实插件的四种写法", "id": "官方审计的三条-p0和真实插件的四种写法"}, {"text": "文档与源码对不上的地方，以及没有解决的问题", "id": "文档与源码对不上的地方以及没有解决的问题"}, {"text": "结论：对每个资源问一个问题", "id": "结论对每个资源问一个问题"}], "file": "dsh_lifecycle_and_effects.html"}, {"title": "给 dsh 写插件：从 apply(ctx) 到打包安装", "title_html": "给 dsh 写插件：从 <code>apply(ctx)<\/code> 到打包安装", "kicker": "插件开发", "deck": "dsh 插件就是一个 Cordis 模块，交付时再包成声明了 dsh.bundle 的 npm 包。本文按官方教程的顺序走完“写插件 → 注册工具 → 挂钩子 → 打包 → 安装 → 叠配置”，每一步都区分仓库原文和实际运行结果，并列出文档与实际行为不符的地方：被拒绝的调用照样走完 post-execute 和 result，配置是四类层而不是五层，构建授权必须写 pnpm 打印的完整键，漏写 peer 的插件能装上却在启动时 import 失败。", "meta": ["deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）", "@deepseek-ai/dsh 0.2.2-rc.5 CLI · 仓库 0.2.3-alpha.2", "@deepseek-ai/cordis 4.2.0-alpha.1", "pnpm 10.34.9 与 11.28.5 实测"], "sections": ["插件是一个带 apply 的 Cordis 模块，inject 决定它何时运行", "官方教程四步：从一行日志到带配置的 greet 工具", "一次工具调用经过五个扩展点，被拒绝的调用也走到最后", "监听事件与打日志：session/event、ctx.logger 和不存在的 dispose 事件", "bundle 和 profile：dsh plugin 是 pnpm 外面的一层薄包装", "配置是四类层，patch 只替换写出来的 config 键", "从 git 安装：要授权构建脚本，而且必须写 pnpm 打印的完整键", "发布到 npm：用 engines.dsh 声明兼容，peer 只用来共享宿主实例", "综合练习：一个带配置、工具、闸门和审计日志的 bundle", "文档与实际行为的出入，以及没有验证的部分"], "chars": 18311, "minutes": 34, "updated": "2026-11-23", "created": "2026-11-23 18:04", "links": [{"text": "插件是一个带 apply 的 Cordis 模块，inject 决定它何时运行", "id": "插件是一个带-apply-的-cordis-模块inject-决定它何时运行"}, {"text": "官方教程四步：从一行日志到带配置的 greet 工具", "id": "官方教程四步从一行日志到带配置的-greet-工具"}, {"text": "一次工具调用经过五个扩展点，被拒绝的调用也走到最后", "id": "一次工具调用经过五个扩展点被拒绝的调用也走到最后"}, {"text": "监听事件与打日志：session/event、ctx.logger 和不存在的 dispose 事件", "id": "监听事件与打日志sessioneventctxlogger-和不存在的-dispose-事件"}, {"text": "bundle 和 profile：dsh plugin 是 pnpm 外面的一层薄包装", "id": "bundle-和-profiledsh-plugin-是-pnpm-外面的一层薄包装"}, {"text": "配置是四类层，patch 只替换写出来的 config 键", "id": "配置是四类层patch-只替换写出来的-config-键"}, {"text": "从 git 安装：要授权构建脚本，而且必须写 pnpm 打印的完整键", "id": "从-git-安装要授权构建脚本而且必须写-pnpm-打印的完整键"}, {"text": "发布到 npm：用 engines.dsh 声明兼容，peer 只用来共享宿主实例", "id": "发布到-npm用-enginesdsh-声明兼容peer-只用来共享宿主实例"}, {"text": "综合练习：一个带配置、工具、闸门和审计日志的 bundle", "id": "综合练习一个带配置工具闸门和审计日志的-bundle"}, {"text": "文档与实际行为的出入，以及没有验证的部分", "id": "文档与实际行为的出入以及没有验证的部分"}], "file": "dsh_plugin_guide.html"}, {"title": "dsh 的服务、事件、配置与插件实战：从 Cordis 源码到一个能卸载干净的插件", "title_html": "dsh 的服务、事件、配置与插件实战：从 Cordis 源码到一个能卸载干净的插件", "kicker": "机制拆解", "deck": "对应学习计划的 03 服务、04 事件、05/06 配置·组合·HMR、07 接进 harness。本文读 dsh 仓库里 vendored Cordis 和 harness 包的源码，用实际运行的实验逐条核对教程里的说法：服务的归属是怎么算出来的、五种事件分发模式出错时各自怎样、配置什么时候校验、改哪些字段才不重启、HMR 替换的边界在哪；再指出教程 07 在这个 commit 上跑不通的原因，最后写一个在真实 harness 包上跑通的插件，把服务、事件和卸载清理串起来。", "meta": ["deepseek-ai/deepseek-harness @ 4b399c3（2026-11-22）", "@deepseek-ai/cordis 4.2.0-alpha.1 · dsh-* 0.2.3-alpha.2", "实验均在 Node 24 上实际运行"], "sections": ["服务是一条 Impl 记录：同一作用域只有一个实现，后来者不接班", "调用方追踪：ctx.tools.register() 为什么知道是谁调的", "五种分发模式里，只有 parallel 让所有监听器跑完", "waterfall：不调 next() 是否决，调了不 return 是 bug", "配置在激活时才校验，volatile 要五个条件同时成立", "cordis.yml 按 id 协调，patch 整块替换 config", "教程 07 在 4b399c3 上跑不通：缺一行组合，还有一个没写进 inject 的顺序依赖", "自写插件 acme-ledger：服务、事件和卸载顺序放在一起", "坑点清单：28 条，按出现顺序"], "chars": 18874, "minutes": 50, "updated": "2026-11-24", "created": "2026-11-24 01:00", "links": [{"text": "服务是一条 Impl 记录：同一作用域只有一个实现，后来者不接班", "id": "服务是一条-impl-记录同一作用域只有一个实现后来者不接班"}, {"text": "调用方追踪：ctx.tools.register() 为什么知道是谁调的", "id": "调用方追踪ctxtoolsregister-为什么知道是谁调的"}, {"text": "五种分发模式里，只有 parallel 让所有监听器跑完", "id": "五种分发模式里只有-parallel-让所有监听器跑完"}, {"text": "waterfall：不调 next() 是否决，调了不 return 是 bug", "id": "waterfall不调-next-是否决调了不-return-是-bug"}, {"text": "配置在激活时才校验，volatile 要五个条件同时成立", "id": "配置在激活时才校验volatile-要五个条件同时成立"}, {"text": "cordis.yml 按 id 协调，patch 整块替换 config", "id": "cordisyml-按-id-协调patch-整块替换-config"}, {"text": "教程 07 在 4b399c3 上跑不通：缺一行组合，还有一个没写进 inject 的顺序依赖", "id": "教程-07-在-4b399c3-上跑不通缺一行组合还有一个没写进-inject-的顺序依赖"}, {"text": "自写插件 acme-ledger：服务、事件和卸载顺序放在一起", "id": "自写插件-acme-ledger服务事件和卸载顺序放在一起"}, {"text": "坑点清单：28 条，按出现顺序", "id": "坑点清单28-条按出现顺序"}], "file": "dsh_services_events_config_plugin.html"}]</script>
+<script>
+(function () {
+  var root = document.documentElement;
+  document.querySelector('[data-theme-toggle]').addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('tech-article-theme', next); } catch (e) {}
+  });
+
+  var data = JSON.parse(document.getElementById('articles').textContent);
+  var grid = document.querySelector('[data-grid]'), empty = document.querySelector('[data-empty]');
+  var search = document.querySelector('[data-search]'), sort = document.querySelector('[data-sort]');
+  var tagBox = document.querySelector('[data-tags]');
+  var active = null;
+
+  var latest = data.map(function (a) { return a.updated; }).sort().pop() || '';
+  document.querySelector('[data-summary]').textContent = '共 ' + data.length + ' 篇' + (latest ? ' · 最近更新 ' + latest : '');
+
+  // articles without a created date fall back to their updated date
+  function created(a) { return a.created || a.updated || ''; }
+  function tagsOf(a) { return [a.kicker].filter(Boolean); }
+  var tagCount = {};
+  data.forEach(function (a) { tagsOf(a).forEach(function (t) { tagCount[t] = (tagCount[t] || 0) + 1; }); });
+  var tags = Object.keys(tagCount).sort(function (x, y) { return tagCount[y] - tagCount[x]; });
+  ['全部'].concat(tags).forEach(function (t, i) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'tag'; b.textContent = t; b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+    b.addEventListener('click', function () {
+      active = i === 0 ? null : t;
+      tagBox.querySelectorAll('.tag').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      render();
+    });
+    tagBox.appendChild(b);
+  });
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function hit(text, q) {
+    var t = esc(text);
+    if (!q) return t;
+    var i = text.toLowerCase().indexOf(q);
+    return i < 0 ? t : esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+  }
+
+  function render() {
+    var q = search.value.trim().toLowerCase();
+    var list = data.filter(function (a) {
+      if (active && tagsOf(a).indexOf(active) < 0) return false;
+      if (!q) return true;
+      return [a.title, a.deck, a.kicker].concat(a.meta || [], a.sections || []).join('\n').toLowerCase().indexOf(q) >= 0;
+    });
+    var key = sort.value;
+    list.sort(function (x, y) {
+      if (key === 'title') return x.title.localeCompare(y.title, 'zh');
+      if (key === 'length') return (y.chars || 0) - (x.chars || 0);
+      if (key === 'created') return created(y).localeCompare(created(x)) || (y.updated || '').localeCompare(x.updated || '');
+      return (y.updated || '').localeCompare(x.updated || '');
+    });
+    grid.innerHTML = list.map(function (a) {
+      var secMatch = q && (a.sections || []).some(function (s) { return s.toLowerCase().indexOf(q) >= 0; });
+      var title = q ? hit(a.title, q) : (a.title_html || esc(a.title));
+      var day = created(a).slice(0, 10);
+      return '<article class="card"><div class="card-side">' + esc(day) +
+          (a.kicker ? '<span class="card-kicker">' + esc(a.kicker) + '</span>' : '') + '</div>' +
+        '<div class="card-main"><h2><a href="' + esc(a.file) + '">' + title + '</a></h2>' +
+        (a.deck ? '<p class="deck">' + hit(a.deck, q) + '</p>' : '') +
+        '<p class="info"><span>约 ' + a.minutes + ' 分钟</span>' +
+          (a.updated && a.updated !== day ? '<span>更新于 ' + esc(a.updated) + '</span>' : '') +
+          (a.meta || []).map(function (m) { return '<span>' + hit(m, q) + '</span>'; }).join('') + '</p>' +
+        ((a.links || []).length ? '<details' + (secMatch ? ' open' : '') + '><summary>' + a.links.length + ' 个章节</summary><ol>' +
+          a.links.map(function (l) { return '<li><a href="' + esc(a.file) + '#' + encodeURIComponent(l.id) + '">' + hit(l.text, q) + '</a></li>'; }).join('') +
+        '</ol></details>' : '') + '</div></article>';
+    }).join('');
+    empty.hidden = list.length > 0;
+    if (!list.length) empty.querySelector('[data-empty-msg]').textContent =
+      (q ? '没有匹配“' + search.value.trim() + '”' : '没有') + (active ? '、标签为“' + active + '”' : '') + '的文章';
+  }
+  document.querySelector('[data-clear]').addEventListener('click', function () {
+    search.value = ''; active = null;
+    tagBox.querySelectorAll('.tag').forEach(function (x, i) { x.setAttribute('aria-pressed', i === 0 ? 'true' : 'false'); });
+    render(); search.focus();
+  });
+  search.addEventListener('input', render);
+  sort.addEventListener('change', render);
+  addEventListener('keydown', function (e) {
+    if (e.key === '/' && document.activeElement !== search) { e.preventDefault(); search.focus(); }
+  });
+  render();
+})();
+</script>
+</body>
+</html>

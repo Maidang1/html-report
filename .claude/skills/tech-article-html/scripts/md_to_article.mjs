@@ -14,6 +14,7 @@
  *   footer:  page footer line
  *   index:   relative link back to the article index, e.g. index.html
  *   updated: pin the article-meta updated date (YYYY-MM-DD); default: today
+ *   created: creation date for the index sort (YYYY-MM-DD or "YYYY-MM-DD HH:MM"); default: none
  *
  * The body is the Markdown subset that maps onto the body fragments
  * build_article.py expects:
@@ -55,7 +56,7 @@ import { spawnSync } from "node:child_process";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BUILD = join(HERE, "build_article.py");
 
-const FM_KEYS = new Set(["title", "kicker", "deck", "meta", "footer", "index", "updated"]);
+const FM_KEYS = new Set(["title", "kicker", "deck", "meta", "footer", "index", "updated", "created"]);
 
 function die(msg) {
   console.error(`md_to_article: ERROR: ${msg}`);
@@ -97,6 +98,7 @@ function parseFront(block) {
   if (!fm.title) die("front matter needs a title");
   if (typeof fm.meta === "string") fm.meta = [fm.meta];
   if (fm.updated && !/^\d{4}-\d{2}-\d{2}$/.test(String(fm.updated))) die("updated must look like 2026-11-19");
+  if (fm.created && !/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(String(fm.created))) die("created must look like 2026-11-19 or 2026-11-19 14:30");
   return fm;
 }
 
@@ -287,9 +289,11 @@ function emit(blocks) {
 }
 
 // --------------------------------------------------------------------------- run
-function pinUpdated(path, date) {
+function pinDates(path, updated, created) {
   const src = readFileSync(path, "utf8");
-  const out = src.replace(/("updated":\s*")[^"]*"/, (m, p) => p + date + '"');
+  let out = src;
+  if (updated) out = out.replace(/("updated":\s*")[^"]*"/, (m, p) => p + updated + '"');
+  if (created) out = out.replace(/("updated":\s*"[^"]*")/, (m) => m + ', "created": "' + created + '"');
   if (out !== src) writeFileSync(path, out);
 }
 
@@ -340,5 +344,5 @@ if (plan) cmd.push("--plan");
 const r = spawnSync(cmd[0], cmd.slice(1), { stdio: "inherit" });
 rmSync(tmpDir, { recursive: true, force: true });
 const status = r.status ?? 1;
-if (status === 0 && fm.updated) pinUpdated(out, String(fm.updated));
+if (status === 0 && (fm.updated || fm.created)) pinDates(out, fm.updated && String(fm.updated), fm.created && String(fm.created));
 process.exitCode = status;

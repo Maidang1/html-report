@@ -8,6 +8,7 @@ meta:
 footer: 源码出处：Claude Code v2.1.325 生产环境二进制包（`/$bunfs/root/chunk-*.js`）、Prime Agent `crates/pa-daemon`；调度器与队列处理器两小节来自本机 v2.1.314。代码中的关键符号名为还原所得，提示词为原文。
 index: index.html
 updated: 2026-11-17
+created: 2026-11-17
 ---
 
 `/loop` 让 Claude Code 定时重复做一件事：盯着 CI、守着一个 PR、隔一阵检查一次部署。它看起来像个定时器，实际上是一个 Skill 加两个调度工具，再加上一套把消息塞回对话的机制。

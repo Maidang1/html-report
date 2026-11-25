@@ -8,6 +8,7 @@ meta:
 footer: 源码出处：`davidroman0O/pi-loop` v0.4.0、`PrimeIntellect-ai/prime-agent`（`pa-core` / `pa-daemon`）、`stbenjam/cronex`、`stbenjam/skills`。
 index: index.html
 updated: 2026-11-17
+created: 2026-11-17
 ---
 
 上一篇拆解了 Claude Code 的 `/loop`。这一篇看另外三种实现：它们都要解决同一个问题——**定时任务到期时，怎么把一条消息送进模型正在进行（或刚刚结束）的对话**——但给出的答案很不一样。

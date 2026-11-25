@@ -9,6 +9,7 @@ meta:
 footer: 源码出处：github.com/openai/codex，commit 4389a52（2026-11-18）。示例数据中的 ID、时间与用量为虚构，字段结构与源码一致。
 index: index.html
 updated: 2026-11-19
+created: 2026-11-19
 ---
 
 在 Codex CLI 里输入 `/goal 把 parser 的测试覆盖率提到 90%` 之后，模型会一轮接一轮地干下去，直到它证明目标达成、确认自己卡住，或者预算耗尽。这篇文章只看 Codex 一家，沿着一次 `/goal` 的真实数据流，从 TUI 到 app-server、goal 扩展、core 线程，再到 SQLite，把每一跳的数据长什么样、为什么这样设计、对 agent 的效果有什么帮助讲清楚。

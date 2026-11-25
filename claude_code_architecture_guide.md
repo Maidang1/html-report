@@ -8,6 +8,7 @@ meta:
 footer: 主要来源：Anthropic 工程博客（Code execution with MCP、Advanced tool use、Making Claude Code safer with sandboxing、How we built Claude Code auto mode、An update on recent Claude Code quality reports、Scaling Managed Agents、How we contain Claude across products、Effective context engineering、Building a C compiler with a team of parallel Claudes）与 code.claude.com/docs（how-claude-code-works、code-mode、prompt-caching、context-window、tools-reference、sub-agents、agent-teams、workflows、hooks、skills、memory、permission-modes、sandboxing、changelog）。未使用任何泄露源码。
 index: index.html
 updated: 2026-11-20
+created: 2026-11-20
 ---
 
 Claude Code 的“智能”来自模型，但它能在真实仓库里连续工作几个小时，靠的是模型之外的那一层：工具、上下文管理、权限与沙箱、扩展机制和运行形态。Anthropic 把这一层叫作 **agentic harness**。本文只用 Anthropic 工程博客和 Claude Code 官方文档（截至 2026-11-20，对应 v2.1.329），按“循环 → 上下文 → 工具 → Code Mode → 扩展 → 多代理 → 安全 → 运行形态”的顺序拆解这一层是怎么设计的，以及每个设计在防什么问题。

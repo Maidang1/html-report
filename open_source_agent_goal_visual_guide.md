@@ -8,6 +8,7 @@ meta:
 footer: 源码出处：anthropics/claude-plugins-official · snarktank/ralph · Th0rgal/open-ralph-wiggum · Yeachan-Heo/oh-my-claudecode · code-yeongyu/oh-my-opencode · PrimeIntellect-ai/prime-agent · deepseek-ai/deepseek-harness
 index: index.html
 updated: 2026-11-18
+created: 2026-11-18
 ---
 
 大语言模型在常规对话循环（Agent Loop）里有一个天然缺陷：**只要模型某一次回复不调用任何工具，`stop_reason` 就会落成正常结束，循环随即退出**。面对需要跑几十分钟甚至几个小时的复杂重构或迁移任务，模型往往写完一半、甚至测试还没全绿，就礼貌地汇报“已完成”然后停在原地。
